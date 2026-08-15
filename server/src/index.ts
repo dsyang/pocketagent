@@ -7,38 +7,29 @@ import { Pruner } from "./jobs/pruner.js";
 import { PushService } from "./push/apns.js";
 import { buildApp } from "./app.js";
 import type { AppContext } from "./context.js";
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) {
-    console.error(`Missing required env var ${name}`);
-    process.exit(1);
-  }
-  return v;
-}
+import { parseEnv } from "./env.js";
 
 async function main() {
-  const dbPath = process.env.DATABASE_PATH ?? "./data/pocket-agent.db";
-  const authToken = process.env.AUTH_TOKEN ?? randomBytes(32).toString("hex");
-  if (!process.env.AUTH_TOKEN) {
+  const env = parseEnv(process.env);
+
+  const authToken = env.AUTH_TOKEN ?? randomBytes(32).toString("hex");
+  if (!env.AUTH_TOKEN) {
     console.warn(`AUTH_TOKEN not set — generated a one-off token for this run: ${authToken}`);
   }
-  const openRouterApiKey = requireEnv("OPENROUTER_API_KEY");
-  const defaultModel = process.env.DEFAULT_MODEL ?? "anthropic/claude-sonnet-5";
-  const port = Number(process.env.PORT ?? 3000);
-  const host = process.env.HOST ?? "127.0.0.1";
+  const openRouterApiKey = env.OPENROUTER_API_KEY;
+  const defaultModel = env.DEFAULT_MODEL;
 
-  const { sqlite, db } = openDatabase(dbPath);
+  const { sqlite, db } = openDatabase(env.DATABASE_PATH);
   const eventLog = new EventLog(sqlite);
 
   let push: PushService | null = null;
-  if (process.env.APNS_TEAM_ID && process.env.APNS_KEY_ID && process.env.APNS_SIGNING_KEY && process.env.APNS_TOPIC) {
+  if (env.APNS_TEAM_ID && env.APNS_KEY_ID && env.APNS_SIGNING_KEY && env.APNS_TOPIC) {
     push = new PushService(sqlite, {
-      team: process.env.APNS_TEAM_ID,
-      keyId: process.env.APNS_KEY_ID,
-      signingKey: process.env.APNS_SIGNING_KEY,
-      topic: process.env.APNS_TOPIC,
-      host: process.env.APNS_HOST,
+      team: env.APNS_TEAM_ID,
+      keyId: env.APNS_KEY_ID,
+      signingKey: env.APNS_SIGNING_KEY,
+      topic: env.APNS_TOPIC,
+      host: env.APNS_HOST,
     });
   } else {
     console.warn("APNs not configured — push notifications disabled (set APNS_TEAM_ID/APNS_KEY_ID/APNS_SIGNING_KEY/APNS_TOPIC)");
@@ -49,7 +40,7 @@ async function main() {
     eventLog,
     loopDeps: {
       openRouterApiKey,
-      maxPriceUsd: process.env.MAX_PRICE_USD ? Number(process.env.MAX_PRICE_USD) : undefined,
+      maxPriceUsd: env.MAX_PRICE_USD,
       onFinish: ({ conversationId, runId, status, finalText }) => {
         if (!push) return;
         if (eventLog.listenerCount(conversationId) > 0) return; // client was watching live, no push needed
@@ -74,11 +65,25 @@ async function main() {
   reaper.start();
   pruner.start();
 
+  const SHUTDOWN_GRACE_MS = 10_000; // safely under the systemd unit's TimeoutStopSec=15
   const shutdown = async (signal: string) => {
     console.log(`${signal} received, shutting down`);
     runner.stop();
     reaper.stop();
     pruner.stop();
+
+    // Give in-flight runs a chance to finish (and disarm their heartbeat
+    // timers) before closing the database out from under them. Bounded: a
+    // genuinely stuck run shouldn't block shutdown forever — it'll be
+    // recovered as interrupted by the orphan scan on next boot either way.
+    await Promise.race([runner.waitForIdle(), new Promise((resolve) => setTimeout(resolve, SHUTDOWN_GRACE_MS))]);
+    if (runner.activeCount > 0) {
+      console.warn(`${runner.activeCount} run(s) still in flight after ${SHUTDOWN_GRACE_MS}ms; closing anyway`);
+    }
+
+    // Fastify's default close() only closes idle connections; an open SSE
+    // stream is never idle and would otherwise hang this indefinitely.
+    app.server.closeAllConnections?.();
     await app.close();
     if (push) await push.close();
     sqlite.close();
@@ -87,8 +92,8 @@ async function main() {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
 
-  await app.listen({ port, host });
-  console.log(`pocket-agent listening on http://${host}:${port} (web UI at /app)`);
+  await app.listen({ port: env.PORT, host: env.HOST });
+  console.log(`pocket-agent listening on http://${env.HOST}:${env.PORT} (web UI at /app)`);
 }
 
 main().catch((err) => {

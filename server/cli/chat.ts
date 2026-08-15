@@ -42,7 +42,11 @@ async function listConversations() {
   }
 }
 
-async function newConversation(model: string, title?: string) {
+async function newConversation(model: string | undefined, title?: string) {
+  // Omitting model (rather than defaulting to a hardcoded id here) lets the
+  // server apply its own configured DEFAULT_MODEL — JSON.stringify drops
+  // `undefined` values, so this serializes to just `{"title": ...}` when no
+  // model is given.
   const conv = await api<{ id: string }>("/conversations", { method: "POST", body: JSON.stringify({ model, title }) });
   console.log(conv.id);
 }
@@ -80,51 +84,66 @@ async function* parseSse(body: ReadableStream<Uint8Array>): AsyncGenerator<{ id?
 }
 
 async function tailEvents(conversationId: string, after: number, stopOn: Set<string> | null): Promise<void> {
-  const res = await fetch(`${BASE_URL}/conversations/${conversationId}/events?after=${after}`, { headers: authHeaders() });
+  // The server keeps this SSE connection open indefinitely (§4: connection
+  // lifetime outlives one run). Without aborting it on the way out, the
+  // socket stays referenced and the process never exits after `send` prints
+  // its final line — it just hangs until Ctrl-C.
+  const ac = new AbortController();
+  const res = await fetch(`${BASE_URL}/conversations/${conversationId}/events?after=${after}`, { headers: authHeaders(), signal: ac.signal });
   if (!res.ok || !res.body) throw new Error(`events HTTP ${res.status}`);
 
-  for await (const evt of parseSse(res.body)) {
-    if (!evt.event) continue;
-    const payload = evt.data ? JSON.parse(evt.data) : {};
-    switch (evt.event) {
-      case "run_started":
-        console.log(`\n[run ${payload.runId} started, model ${payload.model}]`);
-        break;
-      case "assistant_delta":
-        process.stdout.write(payload.text);
-        break;
-      case "reasoning_delta":
-        break; // silent by default in the terminal client
-      case "tool_call":
-        console.log(`\n[searching: ${payload.query}]`);
-        break;
-      case "tool_result":
-        console.log(`[${payload.summary}]`);
-        break;
-      case "assistant_message_final":
-        console.log(); // trailing newline after the streamed text
-        break;
-      case "run_finished":
-        console.log(`[run finished: ${payload.status}]`);
-        if (stopOn?.has("run_finished")) return;
-        break;
-      case "run_error":
-        console.log(`\n[run error: ${payload.message}]`);
-        if (stopOn?.has("run_error")) return;
-        break;
+  try {
+    for await (const evt of parseSse(res.body)) {
+      if (!evt.event) continue;
+      const payload = evt.data ? JSON.parse(evt.data) : {};
+      switch (evt.event) {
+        case "run_started":
+          console.log(`\n[run ${payload.runId} started, model ${payload.model}]`);
+          break;
+        case "assistant_delta":
+          process.stdout.write(payload.text);
+          break;
+        case "reasoning_delta":
+          break; // silent by default in the terminal client
+        case "tool_call":
+          console.log(`\n[searching: ${payload.query}]`);
+          break;
+        case "tool_result":
+          console.log(`[${payload.summary}]`);
+          break;
+        case "assistant_message_final":
+          console.log(); // trailing newline after the streamed text
+          break;
+        case "run_finished":
+          console.log(`[run finished: ${payload.status}]`);
+          if (stopOn?.has("run_finished")) return;
+          break;
+        case "run_error":
+          console.log(`\n[run error: ${payload.message}]`);
+          if (stopOn?.has("run_error")) return;
+          break;
+      }
     }
+  } finally {
+    ac.abort();
   }
 }
 
 async function sendMessage(conversationId: string, content: string) {
+  // Snapshot BEFORE sending: POST /messages calls runner.nudge() synchronously,
+  // which runs executeRun() far enough to append run_started before the 202
+  // is even written to the socket. A snapshot taken after the send would
+  // already sit past run_started (and possibly the first deltas), so tailing
+  // from it would skip the start of the run.
+  const before = await api<{ lastSeq: number }>(`/conversations/${conversationId}`);
+
   const send = await api<{ runId: string; messageId: string }>(`/conversations/${conversationId}/messages`, {
     method: "POST",
     body: JSON.stringify({ content, clientMessageId: `cli_${Date.now()}` }),
   });
   console.log(`[sent, run ${send.runId}]`);
 
-  const snapshot = await api<{ lastSeq: number }>(`/conversations/${conversationId}`);
-  await tailEvents(conversationId, snapshot.lastSeq, new Set(["run_finished", "run_error"]));
+  await tailEvents(conversationId, before.lastSeq, new Set(["run_finished", "run_error"]));
 }
 
 async function tailOnly(conversationId: string, after: number) {
@@ -143,7 +162,7 @@ async function main() {
     case "list":
       return listConversations();
     case "new":
-      return newConversation(args[0] ?? "anthropic/claude-sonnet-5", args[1]);
+      return newConversation(args[0], args[1]);
     case "send":
       if (!args[0] || !args[1]) throw new Error("usage: chat.ts send <conversationId> <message>");
       return sendMessage(args[0], args.slice(1).join(" "));

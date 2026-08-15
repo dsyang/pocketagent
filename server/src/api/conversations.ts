@@ -12,7 +12,7 @@ const listQuerySchema = z.object({
 });
 
 const createBodySchema = z.object({
-  model: z.string().min(1),
+  model: z.string().min(1).optional(),
   title: z.string().min(1).max(200).optional(),
 });
 
@@ -21,7 +21,18 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: AppContext
     const parsed = listQuerySchema.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_query", details: parsed.error.flatten() });
 
-    const before = parsed.data.before ? decodeCursor(parsed.data.before) : undefined;
+    let before: { updatedAt: number; id: string } | undefined;
+    if (parsed.data.before) {
+      try {
+        before = decodeCursor(parsed.data.before);
+      } catch {
+        return reply.code(400).send({ error: "invalid_cursor" });
+      }
+      if (!Number.isFinite(before.updatedAt) || typeof before.id !== "string" || !before.id) {
+        return reply.code(400).send({ error: "invalid_cursor" });
+      }
+    }
+
     const result = listConversations(ctx.db, { limit: parsed.data.limit, before });
     return result;
   });
@@ -37,7 +48,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: AppContext
       .values({
         id,
         title: parsed.data.title ?? null,
-        model: parsed.data.model,
+        model: parsed.data.model ?? ctx.defaultModel,
         lastSeq: 0,
         createdAt: now,
         updatedAt: now,

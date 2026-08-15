@@ -31,8 +31,14 @@ export function decodeCursor(cursor: string): { updatedAt: number; id: string } 
   return { updatedAt, id };
 }
 
-// Keyset pagination ordered by (updated_at DESC, id): stable while new
-// activity reshuffles the top, straight index walk over conv_recency.
+// Keyset pagination ordered by (updated_at DESC, id): straight index walk
+// over conv_recency, no OFFSET drift, no duplicates. It does NOT survive
+// reshuffling unscathed, though: a row bumped above an already-passed
+// cursor (new activity reshuffling the top mid-scroll) is skipped for the
+// rest of the pagination session — every later page filters on
+// updated_at < cursor.updatedAt, so that row is unreachable until the list
+// is reloaded from page 1 (an inherent limitation of keyset pagination over
+// a mutable sort key). See test/pagination.test.ts for the documented gap.
 export function listConversations(db: Db, opts: ListConversationsOptions): ListConversationsResult {
   const { limit, before } = opts;
 

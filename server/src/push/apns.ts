@@ -43,12 +43,15 @@ export class PushService {
         try {
           await this.client.send(notification);
         } catch (err) {
-          if (err instanceof Error && "reason" in err) {
-            const reason = (err as { reason?: string }).reason;
-            if (reason === Errors.unregistered || reason === Errors.badDeviceToken) {
-              this.sqlite.prepare(`DELETE FROM devices WHERE id = ?`).run(d.id);
-            }
+          const reason = err instanceof Error && "reason" in err ? (err as { reason?: string }).reason : undefined;
+          if (reason === Errors.unregistered || reason === Errors.badDeviceToken) {
+            this.sqlite.prepare(`DELETE FROM devices WHERE id = ?`).run(d.id);
+            return;
           }
+          // Anything else (BadTopic, Expired/InvalidProviderToken, TooManyRequests,
+          // ServiceUnavailable, ...) previously vanished silently — this is the only
+          // feature that can only be validated in production, so log what's wrong.
+          console.error(`apns send failed for device ${d.id}: ${reason ?? String(err)}`);
         }
       }),
     );

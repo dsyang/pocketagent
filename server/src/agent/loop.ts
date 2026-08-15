@@ -9,6 +9,7 @@ export interface RunRow {
   conversationId: string;
   model: string;
   status: string;
+  cancelRequested: number;
 }
 
 export interface LoopDeps {
@@ -34,9 +35,9 @@ const DEFAULT_CANCEL_POLL_MS = 250;
 const WEB_TOOLS: OpenRouterToolSpec[] = [{ type: "openrouter:web_search" }, { type: "openrouter:web_fetch" }];
 
 function getRun(sqlite: Database.Database, runId: string): RunRow | null {
-  const row = sqlite.prepare(`SELECT id, conversation_id AS conversationId, model, status FROM runs WHERE id = ?`).get(runId) as
-    | RunRow
-    | undefined;
+  const row = sqlite
+    .prepare(`SELECT id, conversation_id AS conversationId, model, status, cancel_requested AS cancelRequested FROM runs WHERE id = ?`)
+    .get(runId) as RunRow | undefined;
   return row ?? null;
 }
 
@@ -47,7 +48,34 @@ export async function executeRun(deps: LoopDeps, runId: string): Promise<void> {
   if (!run || run.status !== "queued") return;
 
   const now = Date.now();
-  sqlite.prepare(`UPDATE runs SET status = 'running', started_at = ?, heartbeat_at = ? WHERE id = ?`).run(now, now, runId);
+  // CAS, not read-then-write: today nothing can race this in practice (drain()
+  // dedupes via inFlight and everything up to the first await here is
+  // synchronous), but that's an invariant of the caller, not this function —
+  // make the guard explicit and self-defending rather than load-bearing on it.
+  const claimed = sqlite
+    .prepare(`UPDATE runs SET status = 'running', started_at = ?, heartbeat_at = ? WHERE id = ? AND status = 'queued'`)
+    .run(now, now, runId);
+  if (claimed.changes === 0) return;
+
+  if (run.cancelRequested) {
+    // A cancel landed while this run was still queued — settle it without ever contacting OpenRouter.
+    const finishedAt = Date.now();
+    let cancelled = false;
+    const txn = sqlite.transaction(() => {
+      const claim = sqlite.prepare(`UPDATE runs SET status = 'cancelled', finished_at = ? WHERE id = ? AND status = 'running'`).run(finishedAt, runId);
+      if (claim.changes === 0) return;
+      cancelled = true;
+      eventLog.append(run.conversationId, runId, [{ type: "run_finished", payload: { runId, status: "cancelled", usage: null } }]);
+    });
+    try {
+      txn();
+    } finally {
+      if (cancelled) eventLog.flushPending();
+      else eventLog.discardPending();
+    }
+    if (cancelled) deps.onFinish?.({ conversationId: run.conversationId, runId, status: "cancelled", finalText: "" });
+    return;
+  }
 
   const heartbeatMs = deps.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_MS;
   const heartbeatTimer = setInterval(() => {
@@ -204,7 +232,21 @@ export async function executeRun(deps: LoopDeps, runId: string): Promise<void> {
 
   const preview = finalText.slice(0, 120);
 
-  const txn = sqlite.transaction(() => {
+  const txn = sqlite.transaction((): boolean => {
+    // CAS guard: a run can only finalize from 'running'. Without this, a
+    // finalize racing the reaper's "stale heartbeat" sweep (e.g. a long
+    // synchronous SQLite write blocking the event loop past the heartbeat
+    // interval) would silently resurrect a run the reaper already declared
+    // dead — last writer wins instead of the reaper's failure sticking.
+    const claim = sqlite.prepare(`UPDATE runs SET status = ?, error = ?, usage = ?, finished_at = ? WHERE id = ? AND status = 'running'`).run(
+      status,
+      errorMessage,
+      usageJson,
+      finishedAt,
+      runId,
+    );
+    if (claim.changes === 0) return false;
+
     if (messageId) {
       sqlite
         .prepare(
@@ -212,17 +254,32 @@ export async function executeRun(deps: LoopDeps, runId: string): Promise<void> {
         )
         .run(messageId, run.conversationId, finalText, citationsJson, runId, finishedAt);
     }
-    sqlite
-      .prepare(`UPDATE runs SET status = ?, error = ?, usage = ?, finished_at = ? WHERE id = ?`)
-      .run(status, errorMessage, usageJson, finishedAt, runId);
 
     eventLog.append(run.conversationId, runId, finalizeEvents);
 
-    sqlite
-      .prepare(`UPDATE conversations SET last_message_at = ?, last_message_preview = ?, updated_at = ? WHERE id = ?`)
-      .run(finishedAt, preview, finishedAt, run.conversationId);
+    // Only touch last_message_at/preview when a message was actually produced —
+    // a failed run with no text (e.g. an error before any content streamed)
+    // has nothing to preview, and clobbering it with '' blanks out the
+    // conversation's real last message in every list view.
+    if (messageId) {
+      sqlite
+        .prepare(`UPDATE conversations SET last_message_at = ?, last_message_preview = ?, updated_at = ? WHERE id = ?`)
+        .run(finishedAt, preview, finishedAt, run.conversationId);
+    } else {
+      sqlite.prepare(`UPDATE conversations SET updated_at = ? WHERE id = ?`).run(finishedAt, run.conversationId);
+    }
+    return true;
   });
-  txn();
 
-  deps.onFinish?.({ conversationId: run.conversationId, runId, status, finalText });
+  let finalized = false;
+  try {
+    finalized = txn();
+  } finally {
+    if (finalized) eventLog.flushPending();
+    else eventLog.discardPending();
+  }
+
+  if (finalized) {
+    deps.onFinish?.({ conversationId: run.conversationId, runId, status, finalText });
+  }
 }

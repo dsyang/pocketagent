@@ -37,7 +37,7 @@ describe("keyset pagination", () => {
     expect(seen).toEqual([...ids].reverse());
   });
 
-  it("stays stable while new activity reshuffles the top (no OFFSET drift)", () => {
+  it("never duplicates a row, but a row bumped above an already-passed cursor is a documented gap, not a proven-safe case", () => {
     const { sqlite, db } = openDatabase(":memory:");
     const base = Date.now();
     const ids: string[] = [];
@@ -48,14 +48,23 @@ describe("keyset pagination", () => {
     expect(page1.items.map((c) => c.id)).toEqual([ids[4], ids[3]]);
     const cursor = decodeCursor(page1.nextCursor!);
 
-    // New activity bumps the oldest conversation to the top (simulates a new message arriving).
+    // New activity bumps the oldest conversation above the cursor (simulates a new message arriving mid-scroll).
     const bumpedAt = base + 100;
     db.update(conversations).set({ updatedAt: bumpedAt }).where(eq(conversations.id, ids[0])).run();
 
-    // Continuing to page 2 from the *old* cursor must not repeat or skip anything
-    // that was already below the cursor at the time page 1 was read.
+    // Continuing to page 2 from the *old* cursor never repeats a row, and never
+    // skips a row that was still below the cursor when page 1 was read...
     const page2 = listConversations(db, { limit: 2, before: cursor });
     expect(page2.items.map((c) => c.id)).toEqual([ids[2], ids[1]]);
+
+    // ...but ids[0] is now unreachable for the rest of this pagination session:
+    // it was bumped above cursor.updatedAt, and every later page filters on
+    // updated_at < cursor.updatedAt. This is an inherent limitation of keyset
+    // pagination over a mutable sort key, not something fixed here — asserted
+    // explicitly so it reads as a known gap rather than proof of stability.
+    const seenAcrossSession = [...page1.items, ...page2.items].map((c) => c.id);
+    expect(seenAcrossSession).not.toContain(ids[0]);
+    expect(new Set(seenAcrossSession).size).toBe(seenAcrossSession.length); // no duplicates, at least
   });
 
   it("reports activeRunStatus for conversations with a queued/running run, null otherwise", () => {

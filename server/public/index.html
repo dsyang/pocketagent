@@ -68,6 +68,7 @@
   .citations { font-size: 12px; margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
   .citations a { color: var(--accent); text-decoration: none; }
   .status-row { align-self: center; font-size: 12px; color: var(--muted); }
+  .status-row.error { color: var(--danger); }
 
   #composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); }
   #composer textarea { flex: 1; resize: none; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 15px; font-family: inherit; max-height: 140px; }
@@ -168,7 +169,11 @@ async function* parseSse(body) {
       while ((idx = buffer.indexOf("\n\n")) !== -1) {
         const raw = buffer.slice(0, idx);
         buffer = buffer.slice(idx + 2);
-        if (!raw || raw.startsWith(":")) continue;
+        if (!raw) continue;
+        // Yield comment/heartbeat frames too (as a marker, not a real event) so
+        // the caller can rearm its idle watchdog on them — a comment-only frame
+        // otherwise never reaches the caller and looks the same as no traffic.
+        if (raw.startsWith(":")) { yield { comment: true }; continue; }
         let id, event;
         const dataLines = [];
         for (const line of raw.split("\n")) {
@@ -190,7 +195,8 @@ function initialTranscriptState(messages) {
     cursor: 0,
     messages: messages.map((m) => ({ id: m.id, role: m.role, content: m.content, citations: m.citations ? JSON.parse(m.citations) : null })),
     streaming: null, // { runId, text, tools: [{tool, query, summary, citations}] }
-    runStatus: null, // "running" | "finished" | "error"
+    runStatus: null, // "running" | "completed" | "cancelled" | "error"
+    error: null,
   };
 }
 function foldEvent(state, seq, type, payload) {
@@ -200,6 +206,7 @@ function foldEvent(state, seq, type, payload) {
     case "run_started":
       state.streaming = { runId: payload.runId, text: "", tools: [] };
       state.runStatus = "running";
+      state.error = null;
       break;
     case "assistant_delta":
       if (state.streaming) state.streaming.text += payload.text;
@@ -215,7 +222,13 @@ function foldEvent(state, seq, type, payload) {
       }
       break;
     case "assistant_message_final":
-      state.messages.push({ id: payload.messageId, role: "assistant", content: payload.content, citations: payload.citations || null });
+      // Reopening a chat with an active run replays from seq 0 (see openChat)
+      // so the in-flight partial text isn't lost — which also replays every
+      // *earlier* finished run's assistant_message_final for messages the
+      // initial snapshot already loaded. Dedup by id rather than always pushing.
+      if (!state.messages.some((m) => m.id === payload.messageId)) {
+        state.messages.push({ id: payload.messageId, role: "assistant", content: payload.content, citations: payload.citations || null });
+      }
       state.streaming = null;
       break;
     case "run_finished":
@@ -223,9 +236,7 @@ function foldEvent(state, seq, type, payload) {
       break;
     case "run_error":
       state.runStatus = "error";
-      if (state.streaming && !state.messages.some((m) => m.id === state.streaming.runId)) {
-        // no final message arrived (e.g. pure error before any content) — nothing to append, streaming clears below
-      }
+      state.error = payload.message || "The run failed.";
       state.streaming = state.streaming && state.streaming.text ? state.streaming : null;
       break;
   }
@@ -276,6 +287,8 @@ async function loadList(reset) {
 
 async function showList() {
   teardownChat();
+  app.conv = null;
+  app.transcript = null;
   showScreen("screen-list");
   await loadList(true);
 }
@@ -297,7 +310,13 @@ function renderTranscript() {
     if (m.citations && m.citations.length) {
       const c = document.createElement("div");
       c.className = "citations";
-      c.innerHTML = m.citations.map((cite) => `<a href="${cite.url}" target="_blank" rel="noopener">${escapeHtml(cite.title || cite.url)}</a>`).join("");
+      c.innerHTML = m.citations.map((cite) => {
+        // Citations come from tool_result/web_search payloads — third-party
+        // data, not first-party — so both the scheme and the attribute value
+        // need to be treated as untrusted.
+        const safeUrl = /^https?:\/\//i.test(cite.url) ? cite.url : "#";
+        return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener">${escapeHtml(cite.title || cite.url)}</a>`;
+      }).join("");
       b.appendChild(c);
     }
     el.appendChild(b);
@@ -316,24 +335,45 @@ function renderTranscript() {
       el.appendChild(b);
     }
   }
-  if (state.runStatus === "queued" || state.runStatus === "running") {
+  const active = state.runStatus === "queued" || state.runStatus === "running";
+  if (active) {
     const s = document.createElement("div");
     s.className = "status-row";
     s.textContent = state.streaming && state.streaming.tools.length === 0 && !state.streaming.text ? "Thinking…" : "";
     if (s.textContent) el.appendChild(s);
   }
+  if (state.error) {
+    const e = document.createElement("div");
+    e.className = "status-row error";
+    e.textContent = state.error;
+    el.appendChild(e);
+  }
   el.scrollTop = el.scrollHeight;
-  document.getElementById("cancel-btn").classList.toggle("active", state.runStatus === "queued" || state.runStatus === "running");
+  document.getElementById("cancel-btn").classList.toggle("active", active);
+  // The server rejects a second send while a run is active (409) — disable
+  // rather than let the user hit that error on every double-tap.
+  document.getElementById("composer-send").disabled = active;
 }
 
 function subscribe(conversationId, after) {
   teardownChat();
   let cancelled = false;
+  let controller = null;
+  // Set synchronously by the watchdog right before it aborts the in-flight
+  // attempt and kicks off its own reconnect() — so that attempt's own
+  // catch-block fallthrough doesn't ALSO reconnect, which would leave two
+  // concurrent streams folding into app.transcript (the original bug: the
+  // watchdog fired every 45s on a perfectly healthy connection because
+  // comment/heartbeat frames didn't rearm it, and each firing stacked
+  // another stream on top instead of replacing it).
+  let retired = false;
 
   function armWatchdog() {
     if (app.watchdog) clearTimeout(app.watchdog);
     app.watchdog = setTimeout(() => {
       if (cancelled) return;
+      retired = true;
+      controller?.abort();
       reconnect(0.5);
     }, 45000);
   }
@@ -343,14 +383,17 @@ function subscribe(conversationId, after) {
     if (cancelled) return;
     await new Promise((r) => setTimeout(r, delaySeconds * 1000 * (0.85 + Math.random() * 0.3)));
     if (cancelled) return;
+    retired = false;
     run();
   }
 
   async function run() {
+    controller = new AbortController();
     let res;
     try {
-      res = await apiFetch(`/conversations/${conversationId}/events?after=${app.transcript.cursor}`);
+      res = await apiFetch(`/conversations/${conversationId}/events?after=${app.transcript.cursor}`, { signal: controller.signal });
     } catch {
+      if (cancelled || retired) return;
       backoffSeconds = Math.min(backoffSeconds * 2, 8);
       return reconnect(backoffSeconds);
     }
@@ -362,21 +405,26 @@ function subscribe(conversationId, after) {
     armWatchdog();
     try {
       for await (const evt of parseSse(res.body)) {
-        if (cancelled) return;
+        if (cancelled || retired) return;
         armWatchdog();
-        if (!evt.event) continue;
+        if (evt.comment || !evt.event) continue;
         const payload = evt.data ? JSON.parse(evt.data) : {};
         foldEvent(app.transcript, Number(evt.id), evt.event, payload);
         renderTranscript();
       }
     } catch {
-      // stream dropped — fall through to reconnect
+      // stream dropped (including our own deliberate abort) — fall through
     }
-    if (!cancelled) reconnect(backoffSeconds);
+    if (!cancelled && !retired) reconnect(backoffSeconds);
   }
 
   run();
-  app.unsubscribe = () => { cancelled = true; if (app.watchdog) clearTimeout(app.watchdog); };
+  app.unsubscribe = () => {
+    cancelled = true;
+    retired = true;
+    if (app.watchdog) clearTimeout(app.watchdog);
+    controller?.abort();
+  };
 }
 
 async function openChat(id, title) {
@@ -391,7 +439,13 @@ async function openChat(id, title) {
   app.transcript.cursor = 0; // events carry absolute seq; start folding from 0 so nothing before `after` is skipped incorrectly
   renderTranscript();
 
-  const after = snapshot.lastSeq;
+  // The snapshot's `messages` are only finalized rows — an in-flight run's
+  // partial text exists solely as assistant_delta events in run_events, which
+  // sit *before* lastSeq. Replay from 0 whenever a run is active so reopening
+  // mid-answer shows the streamed-so-far text instead of starting mid-sentence
+  // (assistant_message_final is deduped by id in foldEvent, so replaying
+  // earlier finished runs' events too doesn't create duplicate messages).
+  const after = snapshot.activeRun ? 0 : snapshot.lastSeq;
   app.transcript.cursor = after;
   if (snapshot.activeRun) {
     app.transcript.runStatus = snapshot.activeRun.status;
@@ -405,12 +459,25 @@ async function sendMessage() {
   const content = input.value.trim();
   if (!content || !app.conv) return;
   input.value = "";
-  app.transcript.messages.push({ id: `local_${Date.now()}`, role: "user", content, citations: null });
+  const optimistic = { id: `local_${Date.now()}`, role: "user", content, citations: null };
+  app.transcript.messages.push(optimistic);
   renderTranscript();
-  await apiJson(`/conversations/${app.conv}/messages`, {
-    method: "POST",
-    body: JSON.stringify({ content, clientMessageId: `web_${Date.now()}_${Math.random().toString(36).slice(2)}` }),
-  });
+  try {
+    await apiJson(`/conversations/${app.conv}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content, clientMessageId: `web_${Date.now()}_${Math.random().toString(36).slice(2)}` }),
+    });
+  } catch (err) {
+    // Roll back the optimistic bubble and give the text back — otherwise a
+    // stale token, an unreachable server, or a 409 (a run is already active)
+    // renders as if the message were accepted, with no run ever queued and
+    // no way to resend without retyping it.
+    const i = app.transcript.messages.indexOf(optimistic);
+    if (i !== -1) app.transcript.messages.splice(i, 1);
+    input.value = content;
+    renderTranscript();
+    alert(`Send failed: ${err.message}`);
+  }
 }
 
 async function cancelActiveRun() {
@@ -432,9 +499,14 @@ document.getElementById("list-settings").addEventListener("click", () => {
 document.getElementById("list-new").addEventListener("click", async () => {
   let models = [];
   try { models = (await apiJson("/models")).models; } catch {}
-  const model = (models[0] && models[0].id) || prompt("Model id (e.g. anthropic/claude-sonnet-5):");
-  if (!model) return;
-  const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify({ model }) });
+  // Never silently commit to models[0] (an arbitrary entry from OpenRouter's
+  // /models response, with arbitrary pricing) — ask, and let a blank answer
+  // defer to the server's configured DEFAULT_MODEL instead of guessing.
+  const suggestion = models[0] ? ` (blank = server default, e.g. ${models[0].id})` : " (blank = server default)";
+  const input = prompt(`Model id${suggestion}:`);
+  if (input === null) return; // cancelled
+  const body = input.trim() ? { model: input.trim() } : {};
+  const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify(body) });
   await openChat(conv.id, conv.title);
 });
 document.getElementById("chat-back").addEventListener("click", showList);
@@ -445,8 +517,15 @@ document.getElementById("composer-input").addEventListener("keydown", (e) => {
 });
 document.getElementById("cancel-btn").addEventListener("click", cancelActiveRun);
 document.addEventListener("visibilitychange", () => {
-  // Backgrounding just drops the connection; foreground resubscribes from the cursor (§4).
-  if (document.visibilityState === "visible" && app.conv && app.transcript) subscribe(app.conv, app.transcript.cursor);
+  // Backgrounding just drops the connection; foreground resubscribes from the
+  // cursor (§4) — but only if the chat screen is actually the one showing.
+  // showList() clears app.conv/app.transcript, but subscribe() itself calls
+  // teardownChat() too (it doesn't clear them, by design — that would break
+  // the normal open-chat flow), so the screen check is the real guard against
+  // silently reopening a stale chat's stream from the list screen, which was
+  // also suppressing push notifications for it (see index.ts's onFinish).
+  const chatActive = document.getElementById("screen-chat").classList.contains("active");
+  if (document.visibilityState === "visible" && chatActive && app.conv && app.transcript) subscribe(app.conv, app.transcript.cursor);
 });
 
 async function boot() {
