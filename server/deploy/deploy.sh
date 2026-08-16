@@ -7,25 +7,27 @@ set -euo pipefail
 
 PI_HOST="${1:?usage: deploy.sh <pi-tailnet-name> [remote-path]}"
 REMOTE_PATH="${2:-/opt/pocket-agent/repo}"
-REMOTE_USER="${DEPLOY_USER:-pocket-agent}"
+# pocket-agent (the service account) has a nologin shell by design — see
+# setup-pi.md §4 — so we SSH in as an admin account and hop to pocket-agent
+# via passwordless sudo (setup-pi.md §4a) for the repo-owned steps.
+REMOTE_USER="${DEPLOY_USER:-pi}"
+SERVICE_USER="${SERVICE_USER:-pocket-agent}"
 
-echo "==> Deploying to ${REMOTE_USER}@${PI_HOST}:${REMOTE_PATH}"
+echo "==> Deploying to ${REMOTE_USER}@${PI_HOST}:${REMOTE_PATH} (as ${SERVICE_USER})"
 
 ssh "${REMOTE_USER}@${PI_HOST}" bash -s <<EOF
 set -euo pipefail
-cd "${REMOTE_PATH}"
 echo "==> git pull"
-git pull --ff-only
+sudo -u ${SERVICE_USER} git -C "${REMOTE_PATH}" pull --ff-only
 
-cd server
 echo "==> pnpm install (full deps — tsc lives in devDependencies, needed for the build below)"
-pnpm install --frozen-lockfile
+sudo -u ${SERVICE_USER} bash -c 'cd "${REMOTE_PATH}/server" && pnpm install --frozen-lockfile'
 
 echo "==> build"
-pnpm run build
+sudo -u ${SERVICE_USER} bash -c 'cd "${REMOTE_PATH}/server" && pnpm run build'
 
 echo "==> prune to prod deps"
-pnpm prune --prod
+sudo -u ${SERVICE_USER} bash -c 'cd "${REMOTE_PATH}/server" && pnpm prune --prod'
 
 echo "==> restart service (SIGTERM first, systemd handles the rest)"
 sudo systemctl restart pocket-agent

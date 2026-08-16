@@ -15,7 +15,7 @@ sudo apt install -y git build-essential
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 source ~/.bashrc
 nvm install 22
-node --version   # confirm v22.x, arm64
+node --version   # confirm arm64, v22+ (this repo requires node >=22 — v22.x or newer both work)
 corepack enable
 ```
 
@@ -42,26 +42,63 @@ Verify: `curl https://<pi-name>.<tailnet>.ts.net/healthz` from another tailnet d
 
 ```bash
 sudo useradd --system --home /opt/pocket-agent --shell /usr/sbin/nologin pocket-agent
-sudo mkdir -p /opt/pocket-agent/server/data
+sudo mkdir -p /opt/pocket-agent
 sudo chown -R pocket-agent:pocket-agent /opt/pocket-agent
 ```
 
+`pocket-agent` has no login shell on purpose — it only ever runs the systemd service, never an interactive session.
+
+Do **not** pre-create `/opt/pocket-agent/server` here. Step 5 symlinks `/opt/pocket-agent/server` to `repo/server` — if `server/` already exists as a real directory, `ln -s` drops the link *inside* it (`/opt/pocket-agent/server/server`) instead of replacing it, and the systemd unit's `WorkingDirectory` ends up pointing at an empty directory. `data/` gets created under `repo/server/` in step 5 instead.
+
+### 4a. Let your admin user deploy as `pocket-agent`
+
+`deploy.sh` SSHes in as your own admin account (the one you log into the Pi with) and hops to `pocket-agent` via passwordless `sudo` for the repo-owned steps. Add a sudoers rule for that (replace `pi` with your actual admin username):
+
+```bash
+sudo visudo -f /etc/sudoers.d/pocket-agent-deploy
+```
+
+```
+pi ALL=(pocket-agent) NOPASSWD: ALL
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart pocket-agent, /usr/bin/systemctl is-active --quiet pocket-agent, /usr/bin/journalctl -u pocket-agent -n 50 --no-pager
+```
+
+`pocket-agent` itself has no privileges beyond its own files, so letting your admin user act as it is a low-risk hop — the systemctl/journalctl grants are scoped to just the `pocket-agent` unit.
+
 ## 5. Deploy the code
 
-From your laptop, over the tailnet (see `deploy.sh`):
+From your laptop, over the tailnet (see `deploy.sh`), as your admin user:
 
 ```bash
 ./deploy/deploy.sh <pi-tailnet-name>
 ```
 
-Or manually on the Pi:
+(`deploy.sh` defaults `DEPLOY_USER` to `pi` — set `DEPLOY_USER=<your-admin-username>` if it differs.)
+
+Or manually on the Pi, as your admin user:
 
 ```bash
-sudo -u pocket-agent git clone <this-repo-url> /opt/pocket-agent/repo
-cd /opt/pocket-agent/repo/server
-sudo -u pocket-agent pnpm install --frozen-lockfile   # full deps — tsc lives in devDependencies
-sudo -u pocket-agent pnpm run build
-sudo -u pocket-agent pnpm prune --prod
+sudo -u pocket-agent git clone https://github.com/dsyang/pocketagent.git /opt/pocket-agent/repo
+sudo -u pocket-agent mkdir -p /opt/pocket-agent/repo/server/data
+
+sudo -u pocket-agent bash -c 'cd /opt/pocket-agent/repo/server && pnpm install --frozen-lockfile'
+```
+
+`pocket-agent` has no SSH key of its own, so clone over HTTPS (fine for this public repo) rather than the `git@github.com:...` SSH form.
+
+The install will stop partway with `[ERR_PNPM_IGNORED_BUILDS]` — pnpm blocks the postinstall scripts for `better-sqlite3` (needs to compile its native SQLite bindings) and `esbuild` by default. Approve them once:
+
+```bash
+sudo -u pocket-agent bash -c 'cd /opt/pocket-agent/repo/server && pnpm approve-builds --all'
+```
+
+This compiles `better-sqlite3` from source via node-gyp — expect several minutes on a Pi 3B+, no prebuilt arm64 binary is fetched. (The `[WARN] The "pnpm" field in package.json is no longer read...` message alongside this is harmless noise from a newer pnpm relocating that setting; safe to ignore.)
+
+Then build and finish:
+
+```bash
+sudo -u pocket-agent bash -c 'cd /opt/pocket-agent/repo/server && pnpm run build'
+sudo -u pocket-agent bash -c 'cd /opt/pocket-agent/repo/server && pnpm prune --prod'
 sudo ln -s /opt/pocket-agent/repo/server /opt/pocket-agent/server   # or copy, see deploy.sh
 ```
 

@@ -155,6 +155,22 @@ async function cancelRun(runId: string) {
   console.log(result);
 }
 
+interface MessageRow {
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+}
+
+async function showHistory(conversationId: string) {
+  const snapshot = await api<{ messages: MessageRow[] }>(`/conversations/${conversationId}`);
+  for (const m of snapshot.messages) {
+    const ts = new Date(m.createdAt).toLocaleString();
+    console.log(`--- ${m.role} (${ts}) ---`);
+    console.log(m.content);
+    console.log();
+  }
+}
+
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
 
@@ -172,8 +188,11 @@ async function main() {
     case "cancel":
       if (!args[0]) throw new Error("usage: chat.ts cancel <runId>");
       return cancelRun(args[0]);
+    case "history":
+      if (!args[0]) throw new Error("usage: chat.ts history <conversationId>");
+      return showHistory(args[0]);
     default:
-      console.log("usage: chat.ts <list|new|send|tail|cancel> ...");
+      console.log("usage: chat.ts <list|new|send|tail|cancel|history> ...");
       process.exit(1);
   }
 }

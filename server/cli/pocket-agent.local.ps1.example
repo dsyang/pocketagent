@@ -1,0 +1,6 @@
+# Copy this file to pocket-agent.local.ps1 (gitignored — never commit your real token)
+# and fill in the values below. Sourced by chat-new.ps1 / chat-send.ps1.
+
+$env:POCKET_AGENT_URL = "https://rpi3.boston-grouper.ts.net:4141"
+$env:POCKET_AGENT_TOKEN = "<paste the AUTH_TOKEN from server/.env on the Pi>"
+$env:POCKET_AGENT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
