@@ -10,6 +10,7 @@ const querySchema = z.object({
 });
 
 const HEARTBEAT_MS = 20_000;
+const MAX_BUFFERED_BYTES = 1024 * 1024; // backpressure cap per connection
 
 function formatSseEvent(row: RunEventRow): string {
   const data = JSON.stringify({ runId: row.runId, ...(row.payload as object) });
@@ -36,14 +37,35 @@ export function registerEventRoutes(app: FastifyInstance, ctx: AppContext) {
       reply.raw.write(": hb\n\n");
     }, HEARTBEAT_MS);
 
-    const unsubscribe = ctx.eventLog.subscribe(conversationId, parsed.data.after, (row) => {
-      reply.raw.write(formatSseEvent(row));
-    });
+    let closed = false;
+    let unsubscribe: () => void = () => {};
 
     const cleanup = () => {
+      if (closed) return;
+      closed = true;
       clearInterval(heartbeat);
       unsubscribe();
     };
+
+    // subscribe() replays backlog synchronously, so this callback can fire
+    // (and call cleanup(), which calls `unsubscribe`) before the real
+    // unsubscribe function below is assigned — hence the `closed` check
+    // after subscribe() returns.
+    unsubscribe = ctx.eventLog.subscribe(conversationId, parsed.data.after, (row) => {
+      if (closed) return;
+      try {
+        const ok = reply.raw.write(formatSseEvent(row));
+        // A slow client (cellular, stalled tunnel) can otherwise accumulate
+        // the whole delta stream in the socket's internal buffer. Drop it
+        // once backpressure crosses the cap — the client resumes from its
+        // cursor, which is exactly what the resume protocol is for.
+        if (!ok && reply.raw.writableLength > MAX_BUFFERED_BYTES) cleanup();
+      } catch {
+        // reply.raw destroyed mid-write (client vanished, TLS/proxy teardown) — drop the subscriber.
+        cleanup();
+      }
+    });
+    if (closed) unsubscribe();
 
     req.raw.on("close", cleanup);
     reply.raw.on("close", cleanup);

@@ -18,11 +18,14 @@ echo "==> git pull"
 git pull --ff-only
 
 cd server
-echo "==> pnpm install --prod"
-pnpm install --prod --frozen-lockfile
+echo "==> pnpm install (full deps — tsc lives in devDependencies, needed for the build below)"
+pnpm install --frozen-lockfile
 
 echo "==> build"
 pnpm run build
+
+echo "==> prune to prod deps"
+pnpm prune --prod
 
 echo "==> restart service (SIGTERM first, systemd handles the rest)"
 sudo systemctl restart pocket-agent

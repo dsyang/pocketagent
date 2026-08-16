@@ -18,6 +18,11 @@ export function interruptRun(sqlite: Database.Database, eventLog: EventLog, runI
     interrupted = true;
     eventLog.append(conversationId, runId, [{ type: "run_error", payload: { runId, message: reason, code: "interrupted" } }]);
   });
-  txn();
+  try {
+    txn();
+  } finally {
+    if (interrupted) eventLog.flushPending();
+    else eventLog.discardPending();
+  }
   return interrupted;
 }

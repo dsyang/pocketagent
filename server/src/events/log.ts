@@ -46,6 +46,7 @@ function fromRaw(r: RawRow): RunEventRow {
  */
 export class EventLog {
   private emitters = new Map<string, EventEmitter>();
+  private pendingEmit: RunEventRow[] = [];
 
   constructor(private sqlite: Database.Database) {}
 
@@ -59,10 +60,20 @@ export class EventLog {
     return e;
   }
 
-  /** Reserve seqs for `events` and insert them, all inside the caller's transaction context if any. */
+  /**
+   * Reserve seqs for `events` and insert them, all inside the caller's
+   * transaction context if any. If a caller transaction is already open
+   * (better-sqlite3 nests via SAVEPOINT), the rows are durable as soon as
+   * this call returns, but emission is deferred to `pendingEmit` — the
+   * outer transaction can still roll back, and a subscriber must never see
+   * an event for a row that turns out not to exist. The caller is
+   * responsible for calling `flushPending()` right after its own
+   * transaction commits (or `discardPending()` if it throws instead).
+   */
   append(conversationId: string, runId: string, events: NewEvent[]): RunEventRow[] {
     if (events.length === 0) return [];
 
+    const nested = this.sqlite.inTransaction;
     const now = Date.now();
     const n = events.length;
 
@@ -90,9 +101,28 @@ export class EventLog {
     });
 
     const rows = txn();
-    const emitter = this.emitterFor(conversationId);
-    for (const row of rows) emitter.emit("event", row);
+    if (nested) {
+      this.pendingEmit.push(...rows);
+    } else {
+      this.emitRows(rows);
+    }
     return rows;
+  }
+
+  private emitRows(rows: RunEventRow[]): void {
+    for (const row of rows) this.emitterFor(row.conversationId).emit("event", row);
+  }
+
+  /** Emits events queued by append() calls nested inside a caller transaction that has now committed. */
+  flushPending(): void {
+    const rows = this.pendingEmit;
+    this.pendingEmit = [];
+    this.emitRows(rows);
+  }
+
+  /** Drops events queued by append() calls nested inside a caller transaction that rolled back instead of committing. */
+  discardPending(): void {
+    this.pendingEmit = [];
   }
 
   readSince(conversationId: string, after: number): RunEventRow[] {

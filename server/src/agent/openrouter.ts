@@ -59,6 +59,24 @@ interface PendingToolCall {
   emitted: boolean;
 }
 
+// Best-effort typing for the guessed wire format described in the file
+// header — this is the one place that parses untrusted, unverified
+// third-party JSON, so a type here (over `any`) at least makes every field
+// access show up as `unknown`/optional rather than silently `any`.
+interface StreamChunk {
+  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number; total_cost?: number };
+  choices?: Array<{
+    finish_reason?: string | null;
+    delta?: {
+      content?: string;
+      reasoning?: string;
+      annotations?: unknown;
+      tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }>;
+    };
+    message?: { annotations?: unknown };
+  }>;
+}
+
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
 function toolLabel(functionName: string): string {
@@ -147,9 +165,9 @@ export async function* streamChatCompletion(opts: StreamChatOptions): AsyncGener
         const data = line.slice(5).trim();
         if (data === "[DONE]") continue;
 
-        let chunk: any;
+        let chunk: StreamChunk;
         try {
-          chunk = JSON.parse(data);
+          chunk = JSON.parse(data) as StreamChunk;
         } catch {
           continue;
         }

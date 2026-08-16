@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { AppContext } from "../context.js";
 import { newId } from "../db/ids.js";
 import { conversations, messages, runs } from "../db/schema.js";
@@ -31,6 +31,22 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext) {
         const existingRun = existing.runId ? ctx.db.select().from(runs).where(eq(runs.id, existing.runId)).get() : null;
         return reply.code(200).send({ messageId: existing.id, runId: existing.runId, deduped: true, run: existingRun ?? null });
       }
+    }
+
+    // Reject rather than interleave: two runs streaming into the same
+    // conversation concurrently garble the transcript (their assistant_delta
+    // events land in seq order but from two different answers) and each
+    // builds its context from history that doesn't include the other's
+    // reply. This check and the insert below never straddle an `await`, so
+    // there's no window for two requests to both pass it (see loop.ts's
+    // pickup CAS for the same synchronous-execution invariant).
+    const activeRun = ctx.db
+      .select({ id: runs.id, status: runs.status })
+      .from(runs)
+      .where(and(eq(runs.conversationId, conversationId), inArray(runs.status, ["queued", "running"])))
+      .get();
+    if (activeRun) {
+      return reply.code(409).send({ error: "run_in_progress", runId: activeRun.id, status: activeRun.status });
     }
 
     const model = parsed.data.model ?? conversation.model;

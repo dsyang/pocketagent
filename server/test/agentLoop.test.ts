@@ -138,6 +138,57 @@ describe("agent loop", () => {
     expect(run.error).toMatch(/time limit/i);
   });
 
+  it("does not resurrect a run the reaper already marked failed while it was still executing", async () => {
+    const { sqlite } = setupDb();
+    const eventLog = newEventLog(sqlite);
+    const conv = createConversation(sqlite);
+    const { runId } = createUserMessageAndRun(sqlite, conv, "hi");
+
+    const fetchImpl = createScriptedFetch(simpleAnswerScript("hello there"), { delayMs: 15 });
+    const runPromise = executeRun({ sqlite, eventLog, openRouterApiKey: "test", fetchImpl, deltaFlushIntervalMs: 5 }, runId);
+
+    // Simulate the reaper's stale-heartbeat sweep landing mid-flight (e.g. a long
+    // synchronous SQLite write blocked the event loop past the heartbeat interval).
+    setTimeout(() => {
+      sqlite.prepare(`UPDATE runs SET status = 'failed', error = 'interrupted (stale heartbeat)', finished_at = ? WHERE id = ?`).run(Date.now(), runId);
+    }, 20);
+    await runPromise;
+
+    const run = getRunRow(sqlite, runId);
+    expect(run.status).toBe("failed"); // the reaper's verdict sticks — not overwritten to 'completed'
+    expect(run.error).toBe("interrupted (stale heartbeat)");
+
+    // No assistant message should have been inserted after the reap, and the
+    // conversation's preview must still reflect the reaper's own run_error event
+    // — not get clobbered by this finalize resurrecting itself.
+    const messages = getMessages(sqlite, conv);
+    expect(messages).toHaveLength(1); // just the user message
+  });
+
+  it("short-circuits a run already cancel_requested at pickup time to 'cancelled' without ever calling OpenRouter", async () => {
+    const { sqlite } = setupDb();
+    const eventLog = newEventLog(sqlite);
+    const conv = createConversation(sqlite);
+    const { runId } = createUserMessageAndRun(sqlite, conv, "hi");
+    sqlite.prepare(`UPDATE runs SET cancel_requested = 1 WHERE id = ?`).run(runId);
+
+    let fetchCalled = false;
+    const fetchImpl = (async () => {
+      fetchCalled = true;
+      throw new Error("should not be called — a run cancelled before pickup must not contact OpenRouter");
+    }) as typeof fetch;
+
+    await executeRun({ sqlite, eventLog, openRouterApiKey: "test", fetchImpl }, runId);
+
+    expect(fetchCalled).toBe(false);
+    const run = getRunRow(sqlite, runId);
+    expect(run.status).toBe("cancelled");
+
+    const events = getEvents(sqlite, conv);
+    expect(events.map((e) => e.type)).toEqual(["run_finished"]);
+    expect(JSON.parse(events[0].payload).status).toBe("cancelled");
+  });
+
   it("calls onFinish with the final status once the run settles", async () => {
     const { sqlite } = setupDb();
     const eventLog = newEventLog(sqlite);

@@ -19,9 +19,9 @@ export function buildContext(
 
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i]!;
-    if (budget <= 0 && kept.length > 0) break;
+    budget -= m.content.length; // charge before checking, so maxChars is actually respected
+    if (budget < 0 && kept.length > 0) break;
     kept.unshift({ role: m.role, content: m.content });
-    budget -= m.content.length;
   }
 
   return [{ role: "system", content: systemPrompt }, ...kept];

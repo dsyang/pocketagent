@@ -11,17 +11,27 @@ const CURATED_MODELS = [
 ];
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-let cache: { at: number; models: Array<{ id: string; name: string }> } | null = null;
+const NEGATIVE_CACHE_TTL_MS = 30 * 1000; // don't retry the live fetch on every request while OpenRouter is unreachable
+const FETCH_TIMEOUT_MS = 5_000;
 
 export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
+  // Scoped to this registerModelRoutes call (one per app/AppContext instance) rather than
+  // module-level, so separate app instances (tests, any future multi-instance use) don't share state.
+  let cache: { at: number; models: Array<{ id: string; name: string }> } | null = null;
+  let negativeCacheUntil = 0;
+
   app.get("/models", async () => {
     if (cache && Date.now() - cache.at < CACHE_TTL_MS) {
       return { models: cache.models };
+    }
+    if (Date.now() < negativeCacheUntil) {
+      return { models: CURATED_MODELS };
     }
 
     try {
       const res = await fetch("https://openrouter.ai/api/v1/models", {
         headers: { Authorization: `Bearer ${ctx.openRouterApiKey}` },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { data?: Array<{ id: string; name?: string }> };
@@ -31,7 +41,7 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
         return { models };
       }
     } catch {
-      // fall through to curated list
+      negativeCacheUntil = Date.now() + NEGATIVE_CACHE_TTL_MS;
     }
 
     return { models: CURATED_MODELS };

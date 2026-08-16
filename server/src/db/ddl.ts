@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS run_events (
   created_at       INTEGER NOT NULL,
   PRIMARY KEY (conversation_id, seq)
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS run_events_run ON run_events(run_id);
 
 CREATE TABLE IF NOT EXISTS devices (
   id            TEXT PRIMARY KEY,

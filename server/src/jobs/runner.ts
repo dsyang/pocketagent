@@ -15,9 +15,14 @@ export interface RunnerOptions {
  * In-process job runner over the `runs` table (§9 — durability is the row,
  * not a broker). `nudge()` is called right after a send-message transaction
  * for near-instant pickup; a background poll is the backstop for anything
- * missed. `start()` first reclaims orphans: any queued/running row found at
- * boot necessarily predates this process, since nothing could legitimately
- * be mid-flight before the runner has started (§7 crash recovery).
+ * missed. `start()` first reclaims orphans: any `running` row found at boot
+ * necessarily predates this process, since nothing could legitimately be
+ * mid-flight before the runner has started (§7 crash recovery) — it's
+ * failed honestly as interrupted. A `queued` row, in contrast, has produced
+ * no side effects at all (no OpenRouter call, no partial text, no
+ * run_started event even), so it's left alone for `drain()` (called right
+ * after, in `start()`) to pick up and run normally instead of being thrown
+ * away.
  */
 export class Runner {
   private inFlight = new Set<string>();
@@ -28,7 +33,7 @@ export class Runner {
 
   recoverOrphans(): number {
     const { sqlite, eventLog } = this.opts;
-    const rows = sqlite.prepare(`SELECT id, conversation_id AS conversationId FROM runs WHERE status IN ('queued','running')`).all() as Array<{
+    const rows = sqlite.prepare(`SELECT id, conversation_id AS conversationId FROM runs WHERE status = 'running'`).all() as Array<{
       id: string;
       conversationId: string;
     }>;

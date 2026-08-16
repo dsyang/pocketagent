@@ -59,8 +59,9 @@ Or manually on the Pi:
 ```bash
 sudo -u pocket-agent git clone <this-repo-url> /opt/pocket-agent/repo
 cd /opt/pocket-agent/repo/server
-sudo -u pocket-agent pnpm install --prod
+sudo -u pocket-agent pnpm install --frozen-lockfile   # full deps — tsc lives in devDependencies
 sudo -u pocket-agent pnpm run build
+sudo -u pocket-agent pnpm prune --prod
 sudo ln -s /opt/pocket-agent/repo/server /opt/pocket-agent/server   # or copy, see deploy.sh
 ```
 
@@ -74,6 +75,10 @@ PORT=3000
 AUTH_TOKEN=<generate: openssl rand -hex 32>
 OPENROUTER_API_KEY=<your OpenRouter key>
 DEFAULT_MODEL=anthropic/claude-sonnet-5
+# Optional: OpenRouter's provider.max_price routing ceiling, in USD per
+# million completion tokens — requests route only to providers at or under
+# this price. Not a per-run spend cap. Leave unset for no ceiling.
+MAX_PRICE_USD=
 # Optional: leave unset to disable push
 APNS_TEAM_ID=
 APNS_KEY_ID=
