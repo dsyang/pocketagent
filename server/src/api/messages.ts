@@ -20,6 +20,14 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext) {
     const conversation = ctx.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
     if (!conversation) return reply.code(404).send({ error: "not_found" });
 
+    // Archived conversations are read-only: unarchive before replying. Checked
+    // ahead of the idempotency lookup below so a retried send against a
+    // conversation archived in between attempts still surfaces the block
+    // rather than silently returning the original (pre-archive) run.
+    if (conversation.archivedAt !== null) {
+      return reply.code(409).send({ error: "conversation_archived" });
+    }
+
     // Idempotent sends (§7): a retried POST with the same clientMessageId returns the existing run.
     if (parsed.data.clientMessageId) {
       const existing = ctx.db

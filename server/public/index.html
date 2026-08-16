@@ -384,9 +384,19 @@ function renderTranscript() {
   }
   el.scrollTop = el.scrollHeight;
   document.getElementById("cancel-btn").classList.toggle("active", active);
-  // The server rejects a second send while a run is active (409) — disable
-  // rather than let the user hit that error on every double-tap.
-  document.getElementById("composer-send").disabled = active;
+  updateComposerState(active);
+}
+
+// Archived conversations are read-only server-side (409 on send) — reflect
+// that in the composer instead of letting the user hit the error on submit.
+// Also covers the ordinary "a run is already active" disable, so this is the
+// single place that decides whether the composer accepts input.
+function updateComposerState(active) {
+  const input = document.getElementById("composer-input");
+  const sendBtn = document.getElementById("composer-send");
+  sendBtn.disabled = active || app.convArchived;
+  input.disabled = app.convArchived;
+  input.placeholder = app.convArchived ? "Archived — unarchive to reply" : "Message…";
 }
 
 function subscribe(conversationId, after) {
@@ -493,7 +503,7 @@ async function openChat(id, title) {
 async function sendMessage() {
   const input = document.getElementById("composer-input");
   const content = input.value.trim();
-  if (!content || !app.conv) return;
+  if (!content || !app.conv || app.convArchived) return;
   input.value = "";
   const optimistic = { id: `local_${Date.now()}`, role: "user", content, citations: null };
   app.transcript.messages.push(optimistic);
@@ -555,6 +565,8 @@ document.getElementById("archive-btn").addEventListener("click", async () => {
     await setArchived(app.conv, !app.convArchived);
     app.convArchived = !app.convArchived;
     archiveBtn.textContent = app.convArchived ? "Unarchive" : "Archive";
+    const active = app.transcript && (app.transcript.runStatus === "queued" || app.transcript.runStatus === "running");
+    updateComposerState(!!active);
   } catch (err) {
     alert(`Failed: ${err.message}`);
   } finally {

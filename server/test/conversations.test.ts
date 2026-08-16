@@ -117,7 +117,7 @@ describe("archiving conversations", () => {
     expect(unarchiveRes.status).toBe(404);
   });
 
-  it("an archived conversation is still individually fetchable and can still receive messages", async () => {
+  it("an archived conversation is still individually fetchable, but is read-only until unarchived", async () => {
     const h = await buildHarness();
     harnesses.push(h);
     const id = await createConversation(h);
@@ -126,6 +126,11 @@ describe("archiving conversations", () => {
     const getRes = await fetch(`${h.base}/conversations/${id}`, authed());
     expect(getRes.status).toBe(200);
 
+    const blockedRes = await fetch(`${h.base}/conversations/${id}/messages`, authed({ method: "POST", body: JSON.stringify({ content: "hi" }) }));
+    expect(blockedRes.status).toBe(409);
+    expect(await blockedRes.json()).toEqual({ error: "conversation_archived" });
+
+    await fetch(`${h.base}/conversations/${id}/unarchive`, authed({ method: "POST" }));
     const sendRes = await fetch(`${h.base}/conversations/${id}/messages`, authed({ method: "POST", body: JSON.stringify({ content: "hi" }) }));
     expect(sendRes.status).toBe(202);
   });
