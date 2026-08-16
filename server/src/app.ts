@@ -22,6 +22,24 @@ export interface BuildAppOptions {
 export function buildApp(ctx: AppContext, opts: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: opts.logger ?? false });
 
+  // Both clients (cli/chat.ts, public/index.html) always send
+  // Content-Type: application/json, even on no-body POSTs like
+  // /runs/:id/cancel and /conversations/:id/archive — fastify's default JSON
+  // parser 400s on an empty body whenever that header is present, regardless
+  // of whether the route reads req.body. Treat an empty body as `{}` instead.
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
+    if (body === "") return done(null, {});
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      // Fastify's default JSON parser 400s on malformed bodies (FST_ERR_CTP_INVALID_JSON_BODY).
+      // A bare SyntaxError has no statusCode, so without this it falls through
+      // to a 500 — silently downgrading every malformed-body request from a
+      // client error to a server error.
+      done(Object.assign(err as Error, { statusCode: 400 }), undefined);
+    }
+  });
+
   app.get("/healthz", async () => ({ ok: true }));
 
   app.addHook("preHandler", async (req, reply) => {

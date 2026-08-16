@@ -45,7 +45,13 @@ async function main() {
         if (!push) return;
         if (eventLog.listenerCount(conversationId) > 0) return; // client was watching live, no push needed
         if (status === "cancelled") return;
-        const conversation = sqlite.prepare(`SELECT title FROM conversations WHERE id = ?`).get(conversationId) as { title: string | null } | undefined;
+        const conversation = sqlite.prepare(`SELECT title, archived_at FROM conversations WHERE id = ?`).get(conversationId) as
+          | { title: string | null; archived_at: number | null }
+          | undefined;
+        // Archiving mid-run doesn't cancel it, but a push for a conversation
+        // that's now hidden from the inbox and read-only would send the user
+        // into a chat they can't reply to — suppress rather than notify.
+        if (conversation?.archived_at) return;
         const body = status === "failed" ? "The run hit an error." : finalText || "New reply.";
         push.notifyRunFinished({ conversationId, title: conversation?.title ?? null, body }).catch((err) => {
           console.error(`push failed for run ${runId}`, err);

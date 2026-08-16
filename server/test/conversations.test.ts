@@ -64,3 +64,120 @@ describe("GET /conversations?before= — malformed cursors", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("archiving conversations", () => {
+  async function createConversation(h: Harness): Promise<string> {
+    const res = await fetch(`${h.base}/conversations`, authed({ method: "POST", body: JSON.stringify({ model: "test/model" }) }));
+    const conv = (await res.json()) as { id: string };
+    return conv.id;
+  }
+
+  it("hides archived conversations from the default list and surfaces them only behind archived=true", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const id = await createConversation(h);
+
+    const archiveRes = await fetch(`${h.base}/conversations/${id}/archive`, authed({ method: "POST" }));
+    expect(archiveRes.status).toBe(200);
+    const archived = (await archiveRes.json()) as { archivedAt: number | null };
+    expect(archived.archivedAt).not.toBeNull();
+
+    const defaultList = (await (await fetch(`${h.base}/conversations`, authed())).json()) as { items: { id: string }[] };
+    expect(defaultList.items.map((c) => c.id)).not.toContain(id);
+
+    const explicitFalse = (await (await fetch(`${h.base}/conversations?archived=false`, authed())).json()) as { items: { id: string }[] };
+    expect(explicitFalse.items.map((c) => c.id)).not.toContain(id);
+
+    const archivedList = (await (await fetch(`${h.base}/conversations?archived=true`, authed())).json()) as { items: { id: string }[] };
+    expect(archivedList.items.map((c) => c.id)).toContain(id);
+  });
+
+  it("unarchiving restores a conversation to the default list", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const id = await createConversation(h);
+
+    await fetch(`${h.base}/conversations/${id}/archive`, authed({ method: "POST" }));
+    const unarchiveRes = await fetch(`${h.base}/conversations/${id}/unarchive`, authed({ method: "POST" }));
+    expect(unarchiveRes.status).toBe(200);
+    const unarchived = (await unarchiveRes.json()) as { archivedAt: number | null };
+    expect(unarchived.archivedAt).toBeNull();
+
+    const defaultList = (await (await fetch(`${h.base}/conversations`, authed())).json()) as { items: { id: string }[] };
+    expect(defaultList.items.map((c) => c.id)).toContain(id);
+  });
+
+  it("404s archiving/unarchiving a conversation that doesn't exist", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const archiveRes = await fetch(`${h.base}/conversations/conv_missing/archive`, authed({ method: "POST" }));
+    expect(archiveRes.status).toBe(404);
+    const unarchiveRes = await fetch(`${h.base}/conversations/conv_missing/unarchive`, authed({ method: "POST" }));
+    expect(unarchiveRes.status).toBe(404);
+  });
+
+  it("an archived conversation is still individually fetchable, but is read-only until unarchived", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const id = await createConversation(h);
+    await fetch(`${h.base}/conversations/${id}/archive`, authed({ method: "POST" }));
+
+    const getRes = await fetch(`${h.base}/conversations/${id}`, authed());
+    expect(getRes.status).toBe(200);
+
+    const blockedRes = await fetch(`${h.base}/conversations/${id}/messages`, authed({ method: "POST", body: JSON.stringify({ content: "hi" }) }));
+    expect(blockedRes.status).toBe(409);
+    expect(await blockedRes.json()).toEqual({ error: "conversation_archived" });
+
+    await fetch(`${h.base}/conversations/${id}/unarchive`, authed({ method: "POST" }));
+    const sendRes = await fetch(`${h.base}/conversations/${id}/messages`, authed({ method: "POST", body: JSON.stringify({ content: "hi" }) }));
+    expect(sendRes.status).toBe(202);
+  });
+
+  it("a retried send with the same clientMessageId still returns the original run even if the conversation was archived in between", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const id = await createConversation(h);
+
+    const firstSend = await fetch(
+      `${h.base}/conversations/${id}/messages`,
+      authed({ method: "POST", body: JSON.stringify({ content: "hi", clientMessageId: "retry-1" }) }),
+    );
+    expect(firstSend.status).toBe(202);
+    const firstBody = (await firstSend.json()) as { runId: string };
+
+    await fetch(`${h.base}/conversations/${id}/archive`, authed({ method: "POST" }));
+
+    // Same clientMessageId, replayed after archiving — this must be the
+    // idempotent-dedup 200, not a 409: the send already happened, and the
+    // client retrying it can't distinguish "blocked" from "never went
+    // through" if archiving intercepts the retry ahead of the dedup lookup.
+    const retry = await fetch(
+      `${h.base}/conversations/${id}/messages`,
+      authed({ method: "POST", body: JSON.stringify({ content: "hi", clientMessageId: "retry-1" }) }),
+    );
+    expect(retry.status).toBe(200);
+    const retryBody = (await retry.json()) as { runId: string; deduped: boolean };
+    expect(retryBody.deduped).toBe(true);
+    expect(retryBody.runId).toBe(firstBody.runId);
+
+    // A genuinely new send (different clientMessageId) against the same
+    // now-archived conversation must still be blocked.
+    const newSend = await fetch(
+      `${h.base}/conversations/${id}/messages`,
+      authed({ method: "POST", body: JSON.stringify({ content: "a new message", clientMessageId: "retry-2" }) }),
+    );
+    expect(newSend.status).toBe(409);
+  });
+});
+
+describe("malformed request bodies", () => {
+  it("returns 400, not 500, for a body that isn't valid JSON", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/conversations`, authed({ method: "POST", body: "{not json" }));
+    expect(res.status).toBe(400);
+  });
+});

@@ -20,7 +20,13 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext) {
     const conversation = ctx.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
     if (!conversation) return reply.code(404).send({ error: "not_found" });
 
-    // Idempotent sends (§7): a retried POST with the same clientMessageId returns the existing run.
+    // Idempotent sends (§7): a retried POST with the same clientMessageId returns
+    // the existing run. Checked BEFORE the archived block below — a retry of a
+    // send that already succeeded must keep returning that run even if the
+    // conversation was archived in between attempts. Checking archived first
+    // would 409 a request the server already accepted, which the client can't
+    // distinguish from "never sent" (see messages.test.ts for the case this
+    // guards: send, archive, retry the same clientMessageId).
     if (parsed.data.clientMessageId) {
       const existing = ctx.db
         .select()
@@ -31,6 +37,11 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: AppContext) {
         const existingRun = existing.runId ? ctx.db.select().from(runs).where(eq(runs.id, existing.runId)).get() : null;
         return reply.code(200).send({ messageId: existing.id, runId: existing.runId, deduped: true, run: existingRun ?? null });
       }
+    }
+
+    // Archived conversations are read-only: unarchive before replying.
+    if (conversation.archivedAt !== null) {
+      return reply.code(409).send({ error: "conversation_archived" });
     }
 
     // Reject rather than interleave: two runs streaming into the same

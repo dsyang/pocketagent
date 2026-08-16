@@ -48,7 +48,7 @@ See [`server/deploy/setup-pi.md`](server/deploy/setup-pi.md).
 ## Status vs. the plan
 
 - ✅ §1–9: event log, agent loop, OpenRouter streaming + web search/fetch tools, REST/SSE API, bearer auth, crash recovery (reaper + startup scan), pruning, cancellation, idempotent sends, keyset-paginated conversation list.
-- ✅ CLI (`cli/chat.ts`) and the static web page (`public/index.html`).
+- ✅ CLI (`cli/chat.ts`) and the static web page (`public/index.html`), including one-tap conversation archiving (`POST /conversations/:id/archive`) — archived conversations are hidden from the default list and only appear when `?archived=true` is passed.
 - ✅ §13 test suite, including the flagship `resume.test.ts` kill-app contract test, the restart (crash recovery) test, the pruning invariant test, and pagination stability under reshuffling.
 - ⏳ Not built: APNs push is wired up (`src/push/apns.ts`) but untested against real Apple credentials; the KMP mobile app (§11, Phase 3+); the device install/distribution pipeline (Phase 3.5); the client-side SQLite cache (§12, Phase 4).
 - ⚠️ The OpenRouter `openrouter:web_search`/`openrouter:web_fetch` server-tool streaming wire format isn't fully documented publicly — `src/agent/openrouter.ts` implements it against standard OpenAI-compatible streaming conventions and should be re-verified against a live OpenRouter account (the plan's own Phase 2 smoke test).

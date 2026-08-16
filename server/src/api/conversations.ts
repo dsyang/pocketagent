@@ -9,6 +9,11 @@ import { decodeCursor, getConversationSnapshot, listConversations } from "../db/
 const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(30),
   before: z.string().optional(),
+  // The special flag: absent/false lists the normal inbox (archived
+  // conversations hidden); true lists only the archive. z.coerce.boolean()
+  // would coerce the *string* "false" to true (any non-empty string is
+  // truthy), so this checks the literal value instead.
+  archived: z.preprocess((v) => v === "true" || v === "1", z.boolean()).default(false),
 });
 
 const createBodySchema = z.object({
@@ -33,7 +38,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: AppContext
       }
     }
 
-    const result = listConversations(ctx.db, { limit: parsed.data.limit, before });
+    const result = listConversations(ctx.db, { limit: parsed.data.limit, before, archived: parsed.data.archived });
     return result;
   });
 
@@ -64,4 +69,22 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: AppContext
     if (!snapshot) return reply.code(404).send({ error: "not_found" });
     return snapshot;
   });
+
+  // archived: true|false, not a captured timestamp — Date.now() must be
+  // evaluated per request, not once at route-registration time.
+  const setArchived = (archived: boolean) =>
+    async function (req: { params: { id: string } }, reply: import("fastify").FastifyReply) {
+      const conversation = ctx.db.select().from(conversations).where(eq(conversations.id, req.params.id)).get();
+      if (!conversation) return reply.code(404).send({ error: "not_found" });
+
+      ctx.db
+        .update(conversations)
+        .set({ archivedAt: archived ? Date.now() : null })
+        .where(eq(conversations.id, req.params.id))
+        .run();
+      return ctx.db.select().from(conversations).where(eq(conversations.id, req.params.id)).get();
+    };
+
+  app.post<{ Params: { id: string } }>("/conversations/:id/archive", setArchived(true));
+  app.post<{ Params: { id: string } }>("/conversations/:id/unarchive", setArchived(false));
 }
