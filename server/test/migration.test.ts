@@ -47,6 +47,13 @@ describe("migrating a pre-existing database", () => {
     // and the drizzle layer reads the backfilled row without error
     const conv = db.select().from(conversations).where(eq(conversations.id, "conv_legacy")).get();
     expect(conv?.archivedAt).toBeNull();
+
+    // the partial indexes that make the archived-list query plan cheap (see
+    // client.ts's migrate() comment) also need the ALTER to have run first —
+    // creating them against a column that doesn't exist yet would throw.
+    const indexes = sqlite.prepare(`PRAGMA index_list(conversations)`).all() as Array<{ name: string }>;
+    expect(indexes.map((i) => i.name)).toEqual(expect.arrayContaining(["conv_inbox_recency", "conv_archive_recency"]));
+
     sqlite.close();
   });
 

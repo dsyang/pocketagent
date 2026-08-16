@@ -34,7 +34,20 @@ function migrate(sqlite: Database.Database): void {
   // Only safe to create once the column above is guaranteed to exist — the
   // DDL's CREATE TABLE IF NOT EXISTS runs before this, so a legacy database
   // reaches this line without the column until the ALTER above ran.
-  sqlite.exec(`CREATE INDEX IF NOT EXISTS conv_archived ON conversations(archived_at, updated_at DESC, id)`);
+  //
+  // Two partial indexes, not one covering (archived_at, updated_at, id)
+  // index: listConversations always orders by (updated_at DESC, id) within
+  // one archived state or the other, never mixing states in one query. A
+  // leading archived_at column only helps the equality case (archived_at IS
+  // NULL); "IS NOT NULL" is a range predicate SQLite can't use to satisfy
+  // updated_at ordering from that index, so it falls back to a full
+  // temp-b-tree sort of every archived row on each page (verified via
+  // EXPLAIN QUERY PLAN — "USE TEMP B-TREE FOR ORDER BY" instead of "...FOR
+  // LAST TERM OF ORDER BY"). Matching each WHERE arm to its own
+  // (updated_at DESC, id) index gets both cases back to the cheap tie-break
+  // path conv_recency already had.
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS conv_inbox_recency ON conversations(updated_at DESC, id) WHERE archived_at IS NULL`);
+  sqlite.exec(`CREATE INDEX IF NOT EXISTS conv_archive_recency ON conversations(updated_at DESC, id) WHERE archived_at IS NOT NULL`);
 }
 
 export type DbHandle = ReturnType<typeof openDatabase>;

@@ -14,7 +14,13 @@ export const conversations = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [index("conv_recency").on(t.updatedAt, t.id), index("conv_archived").on(t.archivedAt, t.updatedAt, t.id)],
+  (t) => [
+    index("conv_recency").on(t.updatedAt, t.id),
+    // Kept in sync with client.ts's migrate() by hand — the actual DDL is
+    // hand-written (see ddl.ts), this is documentation only.
+    index("conv_inbox_recency").on(t.updatedAt, t.id).where(sql`${t.archivedAt} IS NULL`),
+    index("conv_archive_recency").on(t.updatedAt, t.id).where(sql`${t.archivedAt} IS NOT NULL`),
+  ],
 );
 
 export const messages = sqliteTable(

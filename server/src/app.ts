@@ -32,7 +32,11 @@ export function buildApp(ctx: AppContext, opts: BuildAppOptions): FastifyInstanc
     try {
       done(null, JSON.parse(body as string));
     } catch (err) {
-      done(err as Error, undefined);
+      // Fastify's default JSON parser 400s on malformed bodies (FST_ERR_CTP_INVALID_JSON_BODY).
+      // A bare SyntaxError has no statusCode, so without this it falls through
+      // to a 500 — silently downgrading every malformed-body request from a
+      // client error to a server error.
+      done(Object.assign(err as Error, { statusCode: 400 }), undefined);
     }
   });
 

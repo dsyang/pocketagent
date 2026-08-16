@@ -93,4 +93,37 @@ describe("keyset pagination", () => {
     const archivedResult = listConversations(db, { limit: 10, archived: true });
     expect(archivedResult.items.map((c) => c.id)).toEqual([archived]);
   });
+
+  it("the archived filter survives multi-page pagination (regression: a cursor clause that replaces rather than ANDs with the archived filter would leak interleaved live rows into pages after the first)", () => {
+    const { sqlite, db } = openDatabase(":memory:");
+    const base = Date.now();
+    // Interleaved by updatedAt (archived, live, archived, live, ...) so that
+    // once the cursor advances past the first page, "updated_at < cursor"
+    // alone (without ANDing the archived predicate back in) would let the
+    // interleaved live rows bleed into later archived-only pages.
+    const archivedIds: string[] = [];
+    const liveIds: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      const id = makeConversation(sqlite, base + i, `conv-${i}`);
+      if (i % 2 === 0) {
+        db.update(conversations).set({ archivedAt: base }).where(eq(conversations.id, id)).run();
+        archivedIds.push(id);
+      } else {
+        liveIds.push(id);
+      }
+    }
+
+    const seen: string[] = [];
+    let cursor: { updatedAt: number; id: string } | undefined;
+    for (let page = 0; page < 10; page++) {
+      const result = listConversations(db, { limit: 3, before: cursor, archived: true });
+      seen.push(...result.items.map((c) => c.id));
+      if (!result.nextCursor) break;
+      cursor = decodeCursor(result.nextCursor);
+    }
+
+    expect(seen).toHaveLength(10);
+    expect(new Set(seen)).toEqual(new Set(archivedIds));
+    for (const liveId of liveIds) expect(seen).not.toContain(liveId);
+  });
 });

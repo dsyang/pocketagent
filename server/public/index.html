@@ -473,11 +473,24 @@ function subscribe(conversationId, after) {
 
 async function openChat(id, title) {
   app.conv = id;
+  // Reset archived-derived UI synchronously, before the await below — otherwise
+  // a chat opened right after an archived one briefly (or, if the fetch below
+  // fails, indefinitely) shows the PREVIOUS chat's Archive/Unarchive label and
+  // composer lock state while app.conv already points at the new conversation.
+  app.convArchived = false;
+  document.getElementById("archive-btn").textContent = "Archive";
+  updateComposerState(true); // disabled while loading, same as the "active run" case
   document.getElementById("chat-title").textContent = title || "Chat";
   showScreen("screen-chat");
   document.getElementById("transcript").innerHTML = '<div class="empty">Loading…</div>';
 
-  const snapshot = await apiJson(`/conversations/${id}`);
+  let snapshot;
+  try {
+    snapshot = await apiJson(`/conversations/${id}`);
+  } catch (err) {
+    alert(`Could not open chat: ${err.message}`);
+    return showList();
+  }
   document.getElementById("chat-title").textContent = snapshot.conversation.title || snapshot.conversation.model;
   app.convArchived = !!snapshot.conversation.archivedAt;
   document.getElementById("archive-btn").textContent = app.convArchived ? "Unarchive" : "Archive";
