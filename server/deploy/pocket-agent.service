@@ -1,0 +1,26 @@
+[Unit]
+Description=Pocket Agent server
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pocket-agent
+WorkingDirectory=/opt/pocket-agent/server
+ExecStart=/usr/bin/node --enable-source-maps dist/index.js
+EnvironmentFile=/opt/pocket-agent/server/.env
+Restart=always
+RestartSec=3
+# Deploys send SIGTERM first (see deploy.sh); index.ts's shutdown handler
+# closes the HTTP server and the DB cleanly before systemd restarts it.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# Light sandboxing — single-purpose box, single service.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/pocket-agent/server/data
+
+[Install]
+WantedBy=multi-user.target

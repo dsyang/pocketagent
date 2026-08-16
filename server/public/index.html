@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Pocket Agent</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0b0d10;
+    --panel: #14171c;
+    --border: #262b33;
+    --text: #e8eaed;
+    --muted: #9aa4b2;
+    --accent: #4f8cff;
+    --danger: #ff5d5d;
+    --user-bubble: #22364f;
+    --assistant-bubble: #1b1e24;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--bg); z-index: 5;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .actions { display: flex; gap: 8px; }
+  button {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; font-size: 14px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  main { flex: 1; overflow-y: auto; }
+  #screen-settings, #screen-list, #screen-chat { display: none; height: 100%; flex-direction: column; }
+  #screen-settings.active, #screen-list.active, #screen-chat.active { display: flex; }
+
+  .form { padding: 16px; max-width: 480px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 12px; }
+  .form label { font-size: 13px; color: var(--muted); }
+  .form input, .form select { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 15px; width: 100%; }
+
+  #conv-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+  #conv-list li { padding: 14px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  #conv-list li:hover { background: var(--panel); }
+  #conv-list .row1 { display: flex; justify-content: space-between; gap: 8px; }
+  #conv-list .title { font-weight: 600; font-size: 15px; }
+  #conv-list .model { color: var(--muted); font-size: 12px; }
+  #conv-list .preview { color: var(--muted); font-size: 13px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #conv-list .badge { font-size: 11px; color: var(--accent); }
+  #load-more { margin: 12px auto; }
+
+  #transcript { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .bubble { max-width: 85%; padding: 10px 14px; border-radius: 14px; line-height: 1.45; font-size: 15px; white-space: pre-wrap; word-wrap: break-word; }
+  .bubble.user { align-self: flex-end; background: var(--user-bubble); }
+  .bubble.assistant { align-self: flex-start; background: var(--assistant-bubble); }
+  .bubble code { background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 4px; font-size: 0.9em; }
+  .tool-row { align-self: flex-start; font-size: 12px; color: var(--muted); font-style: italic; }
+  .citations { font-size: 12px; margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .citations a { color: var(--accent); text-decoration: none; }
+  .status-row { align-self: center; font-size: 12px; color: var(--muted); }
+  .status-row.error { color: var(--danger); }
+
+  #composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); }
+  #composer textarea { flex: 1; resize: none; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 15px; font-family: inherit; max-height: 140px; }
+  #cancel-btn { display: none; }
+  #cancel-btn.active { display: inline-block; }
+
+  .empty { padding: 32px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="screen-settings">
+  <header><h1>Pocket Agent — Settings</h1></header>
+  <div class="form">
+    <label for="set-url">Server URL</label>
+    <input id="set-url" placeholder="https://pi-name.tailnet.ts.net" />
+    <label for="set-token">Bearer token</label>
+    <input id="set-token" type="password" placeholder="paste your token" />
+    <button class="primary" id="set-save">Save &amp; continue</button>
+  </div>
+</div>
+
+<div id="screen-list">
+  <header>
+    <h1>Conversations</h1>
+    <div class="actions">
+      <button id="list-settings">Settings</button>
+      <button class="primary" id="list-new">New chat</button>
+    </div>
+  </header>
+  <ul id="conv-list"></ul>
+  <button id="load-more" style="display:none">Load more</button>
+</div>
+
+<div id="screen-chat">
+  <header>
+    <div class="actions">
+      <button id="chat-back">&larr; Back</button>
+    </div>
+    <h1 id="chat-title">Chat</h1>
+    <div class="actions">
+      <button id="cancel-btn">Stop</button>
+    </div>
+  </header>
+  <div id="transcript"></div>
+  <form id="composer">
+    <textarea id="composer-input" rows="1" placeholder="Message…"></textarea>
+    <button class="primary" id="composer-send" type="submit">Send</button>
+  </form>
+</div>
+
+<script>
+"use strict";
+
+// ---------- tiny markdown renderer (bold/italic/code/links, nothing else) ----------
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function renderMarkdown(text) {
+  let html = escapeHtml(text);
+  html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code}</code></pre>`);
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return html;
+}
+
+// ---------- storage / settings ----------
+const store = {
+  get url() { return localStorage.getItem("pa_url") || ""; },
+  set url(v) { localStorage.setItem("pa_url", v); },
+  get token() { return localStorage.getItem("pa_token") || ""; },
+  set token(v) { localStorage.setItem("pa_token", v); },
+};
+
+function apiFetch(path, init) {
+  const headers = Object.assign({ Authorization: `Bearer ${store.token}`, "Content-Type": "application/json" }, (init && init.headers) || {});
+  return fetch(store.url.replace(/\/$/, "") + path, Object.assign({}, init, { headers }));
+}
+async function apiJson(path, init) {
+  const res = await apiFetch(path, init);
+  if (!res.ok) throw new Error(`${(init && init.method) || "GET"} ${path} -> HTTP ${res.status}`);
+  return res.json();
+}
+
+// ---------- SSE parsing over fetch + ReadableStream (not EventSource: needs an Authorization header) ----------
+async function* parseSse(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        if (!raw) continue;
+        // Yield comment/heartbeat frames too (as a marker, not a real event) so
+        // the caller can rearm its idle watchdog on them — a comment-only frame
+        // otherwise never reaches the caller and looks the same as no traffic.
+        if (raw.startsWith(":")) { yield { comment: true }; continue; }
+        let id, event;
+        const dataLines = [];
+        for (const line of raw.split("\n")) {
+          if (line.startsWith("id:")) id = line.slice(3).trim();
+          else if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        }
+        yield { id, event, data: dataLines.join("\n") };
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// ---------- TranscriptReducer: pure fold from (state, event) -> state; replays are idempotent, dupes dropped by seq<=cursor ----------
+function initialTranscriptState(messages) {
+  return {
+    cursor: 0,
+    messages: messages.map((m) => ({ id: m.id, role: m.role, content: m.content, citations: m.citations ? JSON.parse(m.citations) : null })),
+    streaming: null, // { runId, text, tools: [{tool, query, summary, citations}] }
+    runStatus: null, // "running" | "completed" | "cancelled" | "error"
+    error: null,
+  };
+}
+function foldEvent(state, seq, type, payload) {
+  if (seq <= state.cursor) return state; // dedup: at-least-once delivery, seq makes it exactly-once
+  state.cursor = seq;
+  switch (type) {
+    case "run_started":
+      state.streaming = { runId: payload.runId, text: "", tools: [] };
+      state.runStatus = "running";
+      state.error = null;
+      break;
+    case "assistant_delta":
+      if (state.streaming) state.streaming.text += payload.text;
+      break;
+    case "tool_call":
+      if (state.streaming) state.streaming.tools.push({ tool: payload.tool, query: payload.query, summary: null, citations: null });
+      break;
+    case "tool_result":
+      if (state.streaming) {
+        const last = state.streaming.tools.at(-1);
+        if (last && last.summary === null) { last.summary = payload.summary; last.citations = payload.citations; }
+        else state.streaming.tools.push({ tool: payload.tool, query: "", summary: payload.summary, citations: payload.citations });
+      }
+      break;
+    case "assistant_message_final":
+      // Reopening a chat with an active run replays from seq 0 (see openChat)
+      // so the in-flight partial text isn't lost — which also replays every
+      // *earlier* finished run's assistant_message_final for messages the
+      // initial snapshot already loaded. Dedup by id rather than always pushing.
+      if (!state.messages.some((m) => m.id === payload.messageId)) {
+        state.messages.push({ id: payload.messageId, role: "assistant", content: payload.content, citations: payload.citations || null });
+      }
+      state.streaming = null;
+      break;
+    case "run_finished":
+      state.runStatus = payload.status;
+      break;
+    case "run_error":
+      state.runStatus = "error";
+      state.error = payload.message || "The run failed.";
+      state.streaming = state.streaming && state.streaming.text ? state.streaming : null;
+      break;
+  }
+  return state;
+}
+
+// ---------- app state / routing ----------
+const app = { conv: null, nextCursor: null, transcript: null, unsubscribe: null, watchdog: null };
+
+function showScreen(id) {
+  for (const el of document.querySelectorAll("#screen-settings, #screen-list, #screen-chat")) el.classList.remove("active");
+  document.getElementById(id).classList.add("active");
+}
+
+function timeAgo(ms) {
+  if (!ms) return "";
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+// ---------- list screen ----------
+async function loadList(reset) {
+  const listEl = document.getElementById("conv-list");
+  if (reset) { listEl.innerHTML = ""; app.nextCursor = null; }
+  const qs = app.nextCursor ? `?limit=30&before=${encodeURIComponent(app.nextCursor)}` : "?limit=30";
+  const result = await apiJson(`/conversations${qs}`);
+  app.nextCursor = result.nextCursor;
+  document.getElementById("load-more").style.display = result.nextCursor ? "block" : "none";
+
+  if (reset && result.items.length === 0) {
+    listEl.innerHTML = '<div class="empty">No conversations yet. Start one!</div>';
+    return;
+  }
+  for (const c of result.items) {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <div class="row1"><span class="title">${escapeHtml(c.title || "(untitled)")}</span><span class="model">${escapeHtml(c.model)}</span></div>
+      <div class="preview">${escapeHtml(c.lastMessagePreview || "")}</div>
+      <div class="row1"><span class="badge">${c.activeRunStatus ? "● " + c.activeRunStatus : ""}</span><span class="model">${timeAgo(c.updatedAt)}</span></div>
+    `;
+    li.addEventListener("click", () => openChat(c.id, c.title));
+    listEl.appendChild(li);
+  }
+}
+
+async function showList() {
+  teardownChat();
+  app.conv = null;
+  app.transcript = null;
+  showScreen("screen-list");
+  await loadList(true);
+}
+
+// ---------- chat screen ----------
+function teardownChat() {
+  if (app.unsubscribe) { app.unsubscribe(); app.unsubscribe = null; }
+  if (app.watchdog) { clearTimeout(app.watchdog); app.watchdog = null; }
+}
+
+function renderTranscript() {
+  const el = document.getElementById("transcript");
+  el.innerHTML = "";
+  const state = app.transcript;
+  for (const m of state.messages) {
+    const b = document.createElement("div");
+    b.className = `bubble ${m.role}`;
+    b.innerHTML = renderMarkdown(m.content);
+    if (m.citations && m.citations.length) {
+      const c = document.createElement("div");
+      c.className = "citations";
+      c.innerHTML = m.citations.map((cite) => {
+        // Citations come from tool_result/web_search payloads — third-party
+        // data, not first-party — so both the scheme and the attribute value
+        // need to be treated as untrusted.
+        const safeUrl = /^https?:\/\//i.test(cite.url) ? cite.url : "#";
+        return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener">${escapeHtml(cite.title || cite.url)}</a>`;
+      }).join("");
+      b.appendChild(c);
+    }
+    el.appendChild(b);
+  }
+  if (state.streaming) {
+    for (const t of state.streaming.tools) {
+      const row = document.createElement("div");
+      row.className = "tool-row";
+      row.textContent = t.summary ? t.summary : `Searching: ${t.query}`;
+      el.appendChild(row);
+    }
+    if (state.streaming.text) {
+      const b = document.createElement("div");
+      b.className = "bubble assistant";
+      b.innerHTML = renderMarkdown(state.streaming.text);
+      el.appendChild(b);
+    }
+  }
+  const active = state.runStatus === "queued" || state.runStatus === "running";
+  if (active) {
+    const s = document.createElement("div");
+    s.className = "status-row";
+    s.textContent = state.streaming && state.streaming.tools.length === 0 && !state.streaming.text ? "Thinking…" : "";
+    if (s.textContent) el.appendChild(s);
+  }
+  if (state.error) {
+    const e = document.createElement("div");
+    e.className = "status-row error";
+    e.textContent = state.error;
+    el.appendChild(e);
+  }
+  el.scrollTop = el.scrollHeight;
+  document.getElementById("cancel-btn").classList.toggle("active", active);
+  // The server rejects a second send while a run is active (409) — disable
+  // rather than let the user hit that error on every double-tap.
+  document.getElementById("composer-send").disabled = active;
+}
+
+function subscribe(conversationId, after) {
+  teardownChat();
+  let cancelled = false;
+  let controller = null;
+  // Set synchronously by the watchdog right before it aborts the in-flight
+  // attempt and kicks off its own reconnect() — so that attempt's own
+  // catch-block fallthrough doesn't ALSO reconnect, which would leave two
+  // concurrent streams folding into app.transcript (the original bug: the
+  // watchdog fired every 45s on a perfectly healthy connection because
+  // comment/heartbeat frames didn't rearm it, and each firing stacked
+  // another stream on top instead of replacing it).
+  let retired = false;
+
+  function armWatchdog() {
+    if (app.watchdog) clearTimeout(app.watchdog);
+    app.watchdog = setTimeout(() => {
+      if (cancelled) return;
+      retired = true;
+      controller?.abort();
+      reconnect(0.5);
+    }, 45000);
+  }
+
+  let backoffSeconds = 0.5;
+  async function reconnect(delaySeconds) {
+    if (cancelled) return;
+    await new Promise((r) => setTimeout(r, delaySeconds * 1000 * (0.85 + Math.random() * 0.3)));
+    if (cancelled) return;
+    retired = false;
+    run();
+  }
+
+  async function run() {
+    controller = new AbortController();
+    let res;
+    try {
+      res = await apiFetch(`/conversations/${conversationId}/events?after=${app.transcript.cursor}`, { signal: controller.signal });
+    } catch {
+      if (cancelled || retired) return;
+      backoffSeconds = Math.min(backoffSeconds * 2, 8);
+      return reconnect(backoffSeconds);
+    }
+    if (!res.ok || !res.body) {
+      backoffSeconds = Math.min(backoffSeconds * 2, 8);
+      return reconnect(backoffSeconds);
+    }
+    backoffSeconds = 0.5;
+    armWatchdog();
+    try {
+      for await (const evt of parseSse(res.body)) {
+        if (cancelled || retired) return;
+        armWatchdog();
+        if (evt.comment || !evt.event) continue;
+        const payload = evt.data ? JSON.parse(evt.data) : {};
+        foldEvent(app.transcript, Number(evt.id), evt.event, payload);
+        renderTranscript();
+      }
+    } catch {
+      // stream dropped (including our own deliberate abort) — fall through
+    }
+    if (!cancelled && !retired) reconnect(backoffSeconds);
+  }
+
+  run();
+  app.unsubscribe = () => {
+    cancelled = true;
+    retired = true;
+    if (app.watchdog) clearTimeout(app.watchdog);
+    controller?.abort();
+  };
+}
+
+async function openChat(id, title) {
+  app.conv = id;
+  document.getElementById("chat-title").textContent = title || "Chat";
+  showScreen("screen-chat");
+  document.getElementById("transcript").innerHTML = '<div class="empty">Loading…</div>';
+
+  const snapshot = await apiJson(`/conversations/${id}`);
+  document.getElementById("chat-title").textContent = snapshot.conversation.title || snapshot.conversation.model;
+  app.transcript = initialTranscriptState(snapshot.messages);
+  app.transcript.cursor = 0; // events carry absolute seq; start folding from 0 so nothing before `after` is skipped incorrectly
+  renderTranscript();
+
+  // The snapshot's `messages` are only finalized rows — an in-flight run's
+  // partial text exists solely as assistant_delta events in run_events, which
+  // sit *before* lastSeq. Replay from 0 whenever a run is active so reopening
+  // mid-answer shows the streamed-so-far text instead of starting mid-sentence
+  // (assistant_message_final is deduped by id in foldEvent, so replaying
+  // earlier finished runs' events too doesn't create duplicate messages).
+  const after = snapshot.activeRun ? 0 : snapshot.lastSeq;
+  app.transcript.cursor = after;
+  if (snapshot.activeRun) {
+    app.transcript.runStatus = snapshot.activeRun.status;
+    app.transcript.streaming = { runId: snapshot.activeRun.id, text: "", tools: [] };
+  }
+  subscribe(id, after);
+}
+
+async function sendMessage() {
+  const input = document.getElementById("composer-input");
+  const content = input.value.trim();
+  if (!content || !app.conv) return;
+  input.value = "";
+  const optimistic = { id: `local_${Date.now()}`, role: "user", content, citations: null };
+  app.transcript.messages.push(optimistic);
+  renderTranscript();
+  try {
+    await apiJson(`/conversations/${app.conv}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content, clientMessageId: `web_${Date.now()}_${Math.random().toString(36).slice(2)}` }),
+    });
+  } catch (err) {
+    // Roll back the optimistic bubble and give the text back — otherwise a
+    // stale token, an unreachable server, or a 409 (a run is already active)
+    // renders as if the message were accepted, with no run ever queued and
+    // no way to resend without retyping it.
+    const i = app.transcript.messages.indexOf(optimistic);
+    if (i !== -1) app.transcript.messages.splice(i, 1);
+    input.value = content;
+    renderTranscript();
+    alert(`Send failed: ${err.message}`);
+  }
+}
+
+async function cancelActiveRun() {
+  if (!app.transcript || !app.transcript.streaming) return;
+  await apiFetch(`/runs/${app.transcript.streaming.runId}/cancel`, { method: "POST" });
+}
+
+// ---------- wiring ----------
+document.getElementById("set-save").addEventListener("click", () => {
+  store.url = document.getElementById("set-url").value.trim();
+  store.token = document.getElementById("set-token").value.trim();
+  boot();
+});
+document.getElementById("list-settings").addEventListener("click", () => {
+  document.getElementById("set-url").value = store.url;
+  document.getElementById("set-token").value = store.token;
+  showScreen("screen-settings");
+});
+document.getElementById("list-new").addEventListener("click", async () => {
+  let models = [];
+  try { models = (await apiJson("/models")).models; } catch {}
+  // Never silently commit to models[0] (an arbitrary entry from OpenRouter's
+  // /models response, with arbitrary pricing) — ask, and let a blank answer
+  // defer to the server's configured DEFAULT_MODEL instead of guessing.
+  const suggestion = models[0] ? ` (blank = server default, e.g. ${models[0].id})` : " (blank = server default)";
+  const input = prompt(`Model id${suggestion}:`);
+  if (input === null) return; // cancelled
+  const body = input.trim() ? { model: input.trim() } : {};
+  const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify(body) });
+  await openChat(conv.id, conv.title);
+});
+document.getElementById("chat-back").addEventListener("click", showList);
+document.getElementById("load-more").addEventListener("click", () => loadList(false));
+document.getElementById("composer").addEventListener("submit", (e) => { e.preventDefault(); sendMessage(); });
+document.getElementById("composer-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+document.getElementById("cancel-btn").addEventListener("click", cancelActiveRun);
+document.addEventListener("visibilitychange", () => {
+  // Backgrounding just drops the connection; foreground resubscribes from the
+  // cursor (§4) — but only if the chat screen is actually the one showing.
+  // showList() clears app.conv/app.transcript, but subscribe() itself calls
+  // teardownChat() too (it doesn't clear them, by design — that would break
+  // the normal open-chat flow), so the screen check is the real guard against
+  // silently reopening a stale chat's stream from the list screen, which was
+  // also suppressing push notifications for it (see index.ts's onFinish).
+  const chatActive = document.getElementById("screen-chat").classList.contains("active");
+  if (document.visibilityState === "visible" && chatActive && app.conv && app.transcript) subscribe(app.conv, app.transcript.cursor);
+});
+
+async function boot() {
+  if (!store.url || !store.token) {
+    showScreen("screen-settings");
+    return;
+  }
+  try {
+    await showList();
+  } catch (err) {
+    alert(`Could not reach server: ${err.message}`);
+    showScreen("screen-settings");
+  }
+}
+boot();
+</script>
+</body>
+</html>
