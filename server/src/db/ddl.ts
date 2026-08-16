@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   last_seq      INTEGER NOT NULL DEFAULT 0,
   last_message_at      INTEGER,
   last_message_preview TEXT,
+  archived_at   INTEGER,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );

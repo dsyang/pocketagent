@@ -50,14 +50,17 @@
   .form input, .form select { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 15px; width: 100%; }
 
   #conv-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
-  #conv-list li { padding: 14px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  #conv-list li { padding: 14px 16px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; gap: 8px; }
   #conv-list li:hover { background: var(--panel); }
+  #conv-list .row-main { flex: 1; min-width: 0; }
   #conv-list .row1 { display: flex; justify-content: space-between; gap: 8px; }
   #conv-list .title { font-weight: 600; font-size: 15px; }
   #conv-list .model { color: var(--muted); font-size: 12px; }
   #conv-list .preview { color: var(--muted); font-size: 13px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #conv-list .badge { font-size: 11px; color: var(--accent); }
+  #conv-list .archive-btn { flex-shrink: 0; padding: 6px 10px; font-size: 12px; }
   #load-more { margin: 12px auto; }
+  #list-archive-toggle.active { border-color: var(--accent); color: var(--accent); }
 
   #transcript { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
   .bubble { max-width: 85%; padding: 10px 14px; border-radius: 14px; line-height: 1.45; font-size: 15px; white-space: pre-wrap; word-wrap: break-word; }
@@ -93,8 +96,9 @@
 
 <div id="screen-list">
   <header>
-    <h1>Conversations</h1>
+    <h1 id="list-title">Conversations</h1>
     <div class="actions">
+      <button id="list-archive-toggle">Archived</button>
       <button id="list-settings">Settings</button>
       <button class="primary" id="list-new">New chat</button>
     </div>
@@ -111,6 +115,7 @@
     <h1 id="chat-title">Chat</h1>
     <div class="actions">
       <button id="cancel-btn">Stop</button>
+      <button id="archive-btn">Archive</button>
     </div>
   </header>
   <div id="transcript"></div>
@@ -244,7 +249,7 @@ function foldEvent(state, seq, type, payload) {
 }
 
 // ---------- app state / routing ----------
-const app = { conv: null, nextCursor: null, transcript: null, unsubscribe: null, watchdog: null };
+const app = { conv: null, convArchived: false, nextCursor: null, transcript: null, unsubscribe: null, watchdog: null, showingArchived: false };
 
 function showScreen(id) {
   for (const el of document.querySelectorAll("#screen-settings, #screen-list, #screen-chat")) el.classList.remove("active");
@@ -264,31 +269,60 @@ function timeAgo(ms) {
 async function loadList(reset) {
   const listEl = document.getElementById("conv-list");
   if (reset) { listEl.innerHTML = ""; app.nextCursor = null; }
-  const qs = app.nextCursor ? `?limit=30&before=${encodeURIComponent(app.nextCursor)}` : "?limit=30";
-  const result = await apiJson(`/conversations${qs}`);
+  const params = [`limit=30`, `archived=${app.showingArchived}`];
+  if (app.nextCursor) params.push(`before=${encodeURIComponent(app.nextCursor)}`);
+  const result = await apiJson(`/conversations?${params.join("&")}`);
   app.nextCursor = result.nextCursor;
   document.getElementById("load-more").style.display = result.nextCursor ? "block" : "none";
 
   if (reset && result.items.length === 0) {
-    listEl.innerHTML = '<div class="empty">No conversations yet. Start one!</div>';
+    listEl.innerHTML = `<div class="empty">${app.showingArchived ? "No archived conversations." : "No conversations yet. Start one!"}</div>`;
     return;
   }
   for (const c of result.items) {
     const li = document.createElement("li");
-    li.innerHTML = `
+    const main = document.createElement("div");
+    main.className = "row-main";
+    main.innerHTML = `
       <div class="row1"><span class="title">${escapeHtml(c.title || "(untitled)")}</span><span class="model">${escapeHtml(c.model)}</span></div>
       <div class="preview">${escapeHtml(c.lastMessagePreview || "")}</div>
       <div class="row1"><span class="badge">${c.activeRunStatus ? "● " + c.activeRunStatus : ""}</span><span class="model">${timeAgo(c.updatedAt)}</span></div>
     `;
-    li.addEventListener("click", () => openChat(c.id, c.title));
+    main.addEventListener("click", () => openChat(c.id, c.title));
+    li.appendChild(main);
+
+    const archiveBtn = document.createElement("button");
+    archiveBtn.className = "archive-btn";
+    archiveBtn.textContent = app.showingArchived ? "Unarchive" : "Archive";
+    archiveBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      archiveBtn.disabled = true;
+      try {
+        await setArchived(c.id, !app.showingArchived);
+        li.remove();
+      } catch (err) {
+        archiveBtn.disabled = false;
+        alert(`Failed: ${err.message}`);
+      }
+    });
+    li.appendChild(archiveBtn);
+
     listEl.appendChild(li);
   }
 }
 
-async function showList() {
+async function setArchived(conversationId, archived) {
+  await apiJson(`/conversations/${conversationId}/${archived ? "archive" : "unarchive"}`, { method: "POST" });
+}
+
+async function showList(archived) {
   teardownChat();
   app.conv = null;
   app.transcript = null;
+  if (archived !== undefined) app.showingArchived = archived;
+  document.getElementById("list-title").textContent = app.showingArchived ? "Archived" : "Conversations";
+  document.getElementById("list-archive-toggle").classList.toggle("active", app.showingArchived);
+  document.getElementById("list-archive-toggle").textContent = app.showingArchived ? "Back to inbox" : "Archived";
   showScreen("screen-list");
   await loadList(true);
 }
@@ -435,6 +469,8 @@ async function openChat(id, title) {
 
   const snapshot = await apiJson(`/conversations/${id}`);
   document.getElementById("chat-title").textContent = snapshot.conversation.title || snapshot.conversation.model;
+  app.convArchived = !!snapshot.conversation.archivedAt;
+  document.getElementById("archive-btn").textContent = app.convArchived ? "Unarchive" : "Archive";
   app.transcript = initialTranscriptState(snapshot.messages);
   app.transcript.cursor = 0; // events carry absolute seq; start folding from 0 so nothing before `after` is skipped incorrectly
   renderTranscript();
@@ -509,7 +545,22 @@ document.getElementById("list-new").addEventListener("click", async () => {
   const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify(body) });
   await openChat(conv.id, conv.title);
 });
-document.getElementById("chat-back").addEventListener("click", showList);
+document.getElementById("chat-back").addEventListener("click", () => showList());
+document.getElementById("list-archive-toggle").addEventListener("click", () => showList(!app.showingArchived));
+document.getElementById("archive-btn").addEventListener("click", async () => {
+  if (!app.conv) return;
+  const archiveBtn = document.getElementById("archive-btn");
+  archiveBtn.disabled = true;
+  try {
+    await setArchived(app.conv, !app.convArchived);
+    app.convArchived = !app.convArchived;
+    archiveBtn.textContent = app.convArchived ? "Unarchive" : "Archive";
+  } catch (err) {
+    alert(`Failed: ${err.message}`);
+  } finally {
+    archiveBtn.disabled = false;
+  }
+});
 document.getElementById("load-more").addEventListener("click", () => loadList(false));
 document.getElementById("composer").addEventListener("submit", (e) => { e.preventDefault(); sendMessage(); });
 document.getElementById("composer-input").addEventListener("keydown", (e) => {

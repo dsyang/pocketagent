@@ -64,3 +64,69 @@ describe("GET /conversations?before= — malformed cursors", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("archiving conversations", () => {
+  async function createConversation(h: Harness): Promise<string> {
+    const res = await fetch(`${h.base}/conversations`, authed({ method: "POST", body: JSON.stringify({ model: "test/model" }) }));
+    const conv = (await res.json()) as { id: string };
+    return conv.id;
+  }
+
+  it("hides archived conversations from the default list and surfaces them only behind archived=true", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const id = await createConversation(h);
+
+    const archiveRes = await fetch(`${h.base}/conversations/${id}/archive`, authed({ method: "POST" }));
+    expect(archiveRes.status).toBe(200);
+    const archived = (await archiveRes.json()) as { archivedAt: number | null };
+    expect(archived.archivedAt).not.toBeNull();
+
+    const defaultList = (await (await fetch(`${h.base}/conversations`, authed())).json()) as { items: { id: string }[] };
+    expect(defaultList.items.map((c) => c.id)).not.toContain(id);
+
+    const explicitFalse = (await (await fetch(`${h.base}/conversations?archived=false`, authed())).json()) as { items: { id: string }[] };
+    expect(explicitFalse.items.map((c) => c.id)).not.toContain(id);
+
+    const archivedList = (await (await fetch(`${h.base}/conversations?archived=true`, authed())).json()) as { items: { id: string }[] };
+    expect(archivedList.items.map((c) => c.id)).toContain(id);
+  });
+
+  it("unarchiving restores a conversation to the default list", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const id = await createConversation(h);
+
+    await fetch(`${h.base}/conversations/${id}/archive`, authed({ method: "POST" }));
+    const unarchiveRes = await fetch(`${h.base}/conversations/${id}/unarchive`, authed({ method: "POST" }));
+    expect(unarchiveRes.status).toBe(200);
+    const unarchived = (await unarchiveRes.json()) as { archivedAt: number | null };
+    expect(unarchived.archivedAt).toBeNull();
+
+    const defaultList = (await (await fetch(`${h.base}/conversations`, authed())).json()) as { items: { id: string }[] };
+    expect(defaultList.items.map((c) => c.id)).toContain(id);
+  });
+
+  it("404s archiving/unarchiving a conversation that doesn't exist", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const archiveRes = await fetch(`${h.base}/conversations/conv_missing/archive`, authed({ method: "POST" }));
+    expect(archiveRes.status).toBe(404);
+    const unarchiveRes = await fetch(`${h.base}/conversations/conv_missing/unarchive`, authed({ method: "POST" }));
+    expect(unarchiveRes.status).toBe(404);
+  });
+
+  it("an archived conversation is still individually fetchable and can still receive messages", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const id = await createConversation(h);
+    await fetch(`${h.base}/conversations/${id}/archive`, authed({ method: "POST" }));
+
+    const getRes = await fetch(`${h.base}/conversations/${id}`, authed());
+    expect(getRes.status).toBe(200);
+
+    const sendRes = await fetch(`${h.base}/conversations/${id}/messages`, authed({ method: "POST", body: JSON.stringify({ content: "hi" }) }));
+    expect(sendRes.status).toBe(202);
+  });
+});

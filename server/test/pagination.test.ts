@@ -79,4 +79,18 @@ describe("keyset pagination", () => {
     expect(byId.get(idle)).toBeNull();
     expect(byId.get(active)).toBe("running");
   });
+
+  it("the archived option partitions the list: default excludes archived, archived:true includes only archived", () => {
+    const { sqlite, db } = openDatabase(":memory:");
+    const now = Date.now();
+    const live = makeConversation(sqlite, now, "live");
+    const archived = makeConversation(sqlite, now + 1, "archived");
+    db.update(conversations).set({ archivedAt: now }).where(eq(conversations.id, archived)).run();
+
+    const defaultResult = listConversations(db, { limit: 10 });
+    expect(defaultResult.items.map((c) => c.id)).toEqual([live]);
+
+    const archivedResult = listConversations(db, { limit: 10, archived: true });
+    expect(archivedResult.items.map((c) => c.id)).toEqual([archived]);
+  });
 });

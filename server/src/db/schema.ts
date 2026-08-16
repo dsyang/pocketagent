@@ -10,10 +10,11 @@ export const conversations = sqliteTable(
     lastSeq: integer("last_seq").notNull().default(0),
     lastMessageAt: integer("last_message_at"),
     lastMessagePreview: text("last_message_preview"),
+    archivedAt: integer("archived_at"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [index("conv_recency").on(t.updatedAt, t.id)],
+  (t) => [index("conv_recency").on(t.updatedAt, t.id), index("conv_archived").on(t.archivedAt, t.updatedAt, t.id)],
 );
 
 export const messages = sqliteTable(

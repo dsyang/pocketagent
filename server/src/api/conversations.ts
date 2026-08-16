@@ -9,6 +9,11 @@ import { decodeCursor, getConversationSnapshot, listConversations } from "../db/
 const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(30),
   before: z.string().optional(),
+  // The special flag: absent/false lists the normal inbox (archived
+  // conversations hidden); true lists only the archive. z.coerce.boolean()
+  // would coerce the *string* "false" to true (any non-empty string is
+  // truthy), so this checks the literal value instead.
+  archived: z.preprocess((v) => v === "true" || v === "1", z.boolean()).default(false),
 });
 
 const createBodySchema = z.object({
@@ -33,7 +38,7 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: AppContext
       }
     }
 
-    const result = listConversations(ctx.db, { limit: parsed.data.limit, before });
+    const result = listConversations(ctx.db, { limit: parsed.data.limit, before, archived: parsed.data.archived });
     return result;
   });
 
@@ -63,5 +68,23 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: AppContext
     const snapshot = getConversationSnapshot(ctx.db, req.params.id);
     if (!snapshot) return reply.code(404).send({ error: "not_found" });
     return snapshot;
+  });
+
+  app.post<{ Params: { id: string } }>("/conversations/:id/archive", async (req, reply) => {
+    const conversation = ctx.db.select().from(conversations).where(eq(conversations.id, req.params.id)).get();
+    if (!conversation) return reply.code(404).send({ error: "not_found" });
+
+    ctx.db.update(conversations).set({ archivedAt: Date.now() }).where(eq(conversations.id, req.params.id)).run();
+    const updated = ctx.db.select().from(conversations).where(eq(conversations.id, req.params.id)).get();
+    return updated;
+  });
+
+  app.post<{ Params: { id: string } }>("/conversations/:id/unarchive", async (req, reply) => {
+    const conversation = ctx.db.select().from(conversations).where(eq(conversations.id, req.params.id)).get();
+    if (!conversation) return reply.code(404).send({ error: "not_found" });
+
+    ctx.db.update(conversations).set({ archivedAt: null }).where(eq(conversations.id, req.params.id)).run();
+    const updated = ctx.db.select().from(conversations).where(eq(conversations.id, req.params.id)).get();
+    return updated;
   });
 }

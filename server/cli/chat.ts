@@ -30,16 +30,29 @@ interface ConversationListItem {
   model: string;
   updatedAt: number;
   lastMessagePreview: string | null;
+  archivedAt: number | null;
   activeRunStatus: "queued" | "running" | null;
 }
 
-async function listConversations() {
-  const result = await api<{ items: ConversationListItem[]; nextCursor: string | null }>("/conversations?limit=30");
+async function listConversations(archived: boolean) {
+  const result = await api<{ items: ConversationListItem[]; nextCursor: string | null }>(
+    `/conversations?limit=30&archived=${archived}`,
+  );
   for (const c of result.items) {
     const status = c.activeRunStatus ? ` [${c.activeRunStatus}]` : "";
     console.log(`${c.id}  ${c.model}  ${c.title ?? "(untitled)"}${status}`);
     if (c.lastMessagePreview) console.log(`  ${c.lastMessagePreview}`);
   }
+}
+
+async function archiveConversation(conversationId: string) {
+  const conv = await api<{ id: string; archivedAt: number | null }>(`/conversations/${conversationId}/archive`, { method: "POST" });
+  console.log(`archived ${conv.id}`);
+}
+
+async function unarchiveConversation(conversationId: string) {
+  const conv = await api<{ id: string; archivedAt: number | null }>(`/conversations/${conversationId}/unarchive`, { method: "POST" });
+  console.log(`unarchived ${conv.id}`);
 }
 
 async function newConversation(model: string | undefined, title?: string) {
@@ -176,7 +189,13 @@ async function main() {
 
   switch (cmd) {
     case "list":
-      return listConversations();
+      return listConversations(args[0] === "--archived");
+    case "archive":
+      if (!args[0]) throw new Error("usage: chat.ts archive <conversationId>");
+      return archiveConversation(args[0]);
+    case "unarchive":
+      if (!args[0]) throw new Error("usage: chat.ts unarchive <conversationId>");
+      return unarchiveConversation(args[0]);
     case "new":
       return newConversation(args[0], args[1]);
     case "send":
@@ -192,7 +211,7 @@ async function main() {
       if (!args[0]) throw new Error("usage: chat.ts history <conversationId>");
       return showHistory(args[0]);
     default:
-      console.log("usage: chat.ts <list|new|send|tail|cancel|history> ...");
+      console.log("usage: chat.ts <list [--archived]|new|send|tail|cancel|history|archive|unarchive> ...");
       process.exit(1);
   }
 }

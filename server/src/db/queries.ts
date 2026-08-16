@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
 import type { Db } from "./client.js";
 import { conversations, messages, runs } from "./schema.js";
 
@@ -9,12 +9,18 @@ export interface ConversationListItem {
   updatedAt: number;
   lastMessageAt: number | null;
   lastMessagePreview: string | null;
+  archivedAt: number | null;
   activeRunStatus: "queued" | "running" | null;
 }
 
 export interface ListConversationsOptions {
   limit: number;
   before?: { updatedAt: number; id: string };
+  // The "special flag" (§ archive feature): omitted/false lists the normal,
+  // non-archived inbox; true lists only archived conversations. There is no
+  // "both" mode — archiving something is meant to make it disappear from the
+  // list you actually scroll, so the two views stay mutually exclusive.
+  archived?: boolean;
 }
 
 export interface ListConversationsResult {
@@ -40,11 +46,13 @@ export function decodeCursor(cursor: string): { updatedAt: number; id: string } 
 // is reloaded from page 1 (an inherent limitation of keyset pagination over
 // a mutable sort key). See test/pagination.test.ts for the documented gap.
 export function listConversations(db: Db, opts: ListConversationsOptions): ListConversationsResult {
-  const { limit, before } = opts;
+  const { limit, before, archived } = opts;
 
-  const whereClause = before
+  const cursorClause = before
     ? or(lt(conversations.updatedAt, before.updatedAt), and(eq(conversations.updatedAt, before.updatedAt), lt(conversations.id, before.id)))
     : undefined;
+  const archivedClause = archived ? isNotNull(conversations.archivedAt) : isNull(conversations.archivedAt);
+  const whereClause = cursorClause ? and(archivedClause, cursorClause) : archivedClause;
 
   const rows = db
     .select()
@@ -73,6 +81,7 @@ export function listConversations(db: Db, opts: ListConversationsOptions): ListC
     updatedAt: c.updatedAt,
     lastMessageAt: c.lastMessageAt,
     lastMessagePreview: c.lastMessagePreview,
+    archivedAt: c.archivedAt,
     activeRunStatus: activeByConv.get(c.id) ?? null,
   }));
 
