@@ -22,10 +22,10 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
 
   app.get("/models", async () => {
     if (cache && Date.now() - cache.at < CACHE_TTL_MS) {
-      return { models: cache.models };
+      return { models: cache.models, default: ctx.defaultModel };
     }
     if (Date.now() < negativeCacheUntil) {
-      return { models: CURATED_MODELS };
+      return { models: CURATED_MODELS, default: ctx.defaultModel };
     }
 
     try {
@@ -38,12 +38,12 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
       const models = (body.data ?? []).map((m) => ({ id: m.id, name: m.name ?? m.id }));
       if (models.length > 0) {
         cache = { at: Date.now(), models };
-        return { models };
+        return { models, default: ctx.defaultModel };
       }
     } catch {
       negativeCacheUntil = Date.now() + NEGATIVE_CACHE_TTL_MS;
     }
 
-    return { models: CURATED_MODELS };
+    return { models: CURATED_MODELS, default: ctx.defaultModel };
   });
 }
