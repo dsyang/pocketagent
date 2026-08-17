@@ -15,7 +15,7 @@ export const envSchema = z.object({
   DATABASE_PATH: z.string().min(1).default("./data/pocket-agent.db"),
   AUTH_TOKEN: optionalString(),
   OPENROUTER_API_KEY: z.string().min(1),
-  DEFAULT_MODEL: z.string().min(1).default("anthropic/claude-sonnet-5"),
+  DEFAULT_MODEL: z.string().min(1).default("deepseek/deepseek-v4-flash-0731"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   HOST: z.string().min(1).default("127.0.0.1"),
   // OpenRouter's provider.max_price routing ceiling (USD per million completion

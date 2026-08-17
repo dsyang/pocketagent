@@ -551,6 +551,7 @@ function renderModelOptions(filter) {
   }
   for (const m of app.modelsList || []) {
     if (f && !(m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f))) continue;
+    if (!f && m.id === app.modelsDefault) continue; // already shown as the pinned Default row above
     container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id));
   }
 
