@@ -3,6 +3,8 @@ import { buildApp } from "../src/app.js";
 import { openDatabase } from "../src/db/client.js";
 import { EventLog } from "../src/events/log.js";
 import { Runner } from "../src/jobs/runner.js";
+import { CURATED_MODELS } from "../src/api/models.js";
+import { envSchema } from "../src/env.js";
 import type { AppContext } from "../src/context.js";
 import type { FastifyInstance } from "fastify";
 
@@ -76,16 +78,36 @@ describe("GET /models", () => {
     expect(openRouterCalls).toHaveLength(0);
   });
 
-  it("searching for a curated model returns it without touching the live API", async () => {
-    const openRouterCalls = stubOpenRouterFetch(() => Promise.reject(new Error("should not be called")));
+  // A search always checks the live catalog too, even when the curated set
+  // already has a match — a curated id can otherwise permanently shadow a
+  // more specific live model whose id is one of its substrings (regression
+  // test for that: the live stub below deliberately returns an entry that
+  // duplicates the curated hit's id, to also verify the union doesn't list
+  // it twice).
+  it("searching for a curated model still includes it, merged with the live catalog rather than short-circuiting", async () => {
+    stubOpenRouterFetch(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [
+              { id: "z-ai/glm-5.2", name: "Z.ai: GLM 5.2" }, // duplicates the curated entry — must not be listed twice
+              { id: "z-ai/glm-5.2-mini", name: "Z.ai: GLM 5.2 Mini" },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
     const h = await buildHarness();
     harnesses.push(h);
 
     const res = await fetch(`${h.base}/models?q=glm`, authed());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { models: Array<{ id: string }>; default: string };
-    expect(body.models.map((m) => m.id)).toContain("z-ai/glm-5.2");
-    expect(openRouterCalls).toHaveLength(0);
+    const ids = body.models.map((m) => m.id);
+    expect(ids).toContain("z-ai/glm-5.2");
+    expect(ids).toContain("z-ai/glm-5.2-mini"); // the live-only, non-shadowed match
+    expect(ids.filter((id) => id === "z-ai/glm-5.2")).toHaveLength(1); // not duplicated
   });
 
   it("searching for something not in the curated list falls back to the live catalog", async () => {
@@ -112,5 +134,38 @@ describe("GET /models", () => {
     const body = (await res.json()) as { models: Array<{ id: string }>; default: string };
     expect(body.default).toBe("test/default-model");
     expect(body.models).toEqual([]);
+  });
+
+  it("fetches the live catalog once and reuses it across multiple searches, within the cache TTL", async () => {
+    const openRouterCalls = stubOpenRouterFetch(() =>
+      Promise.resolve(new Response(JSON.stringify({ data: [{ id: "some/obscure-model", name: "Some Obscure Model" }] }), { status: 200 })),
+    );
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    await fetch(`${h.base}/models?q=obscure`, authed());
+    await fetch(`${h.base}/models?q=another-live-only-term`, authed());
+    expect(openRouterCalls).toHaveLength(1);
+  });
+
+  it("caps live-catalog results at 50, so a broad search can't dump the whole catalog into the picker", async () => {
+    const liveModels = Array.from({ length: 60 }, (_, i) => ({ id: `some-provider/broad-match-${i}`, name: `Broad Match ${i}` }));
+    stubOpenRouterFetch(() => Promise.resolve(new Response(JSON.stringify({ data: liveModels }), { status: 200 })));
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/models?q=broad-match`, authed());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { models: Array<{ id: string }> };
+    expect(body.models).toHaveLength(50);
+  });
+
+  // Regression guard for the client's dedupe between the pinned "Default"
+  // row and a CURATED_MODELS entry that happens to share its id (see
+  // index.html's renderModelOptions): if this ever drifts apart, the picker
+  // quietly shows the default model twice with nothing else catching it.
+  it("keeps DEFAULT_MODEL's fallback in the curated list", () => {
+    const fallbackDefault = envSchema.shape.DEFAULT_MODEL.parse(undefined);
+    expect(CURATED_MODELS.map((m) => m.id)).toContain(fallbackDefault);
   });
 });

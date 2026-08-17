@@ -534,8 +534,13 @@ function buildModelOption(pendingValue, name, slug, selected) {
 
 // app.modelsList only ever holds the small curated set (GET /models with no
 // query) — the full multi-hundred-model OpenRouter catalog is never loaded
-// up front. If the curated set has nothing matching the typed filter, fall
-// back to a debounced server-side search of the live catalog instead.
+// up front. While filtering, the curated set is shown instantly as a local
+// preview, but a debounced live search always runs too (not just when the
+// curated set has zero matches) — a curated id can otherwise permanently
+// shadow a more specific live model whose id happens to be one of its
+// substrings, the same issue GET /models?q= itself guards against
+// server-side. The live search's response is the authoritative curated+live
+// union and replaces this preview once it lands.
 let modelSearchSeq = 0;
 let modelSearchTimer = null;
 
@@ -547,7 +552,13 @@ function renderModelOptions(filter) {
 
   container.innerHTML = "";
   if (!f && app.modelsDefault) {
-    container.appendChild(buildModelOption(null, "Default", app.modelsDefault, !app.pendingModel));
+    // app.pendingModel is null when the default is (implicitly) selected,
+    // but it's also set explicitly to app.modelsDefault's own id if that's
+    // what got clicked while filtered (the Default row itself is hidden
+    // while filtering, so that's the only row reachable for it then) —
+    // both represent the same selection and must check the box here.
+    const defaultSelected = !app.pendingModel || app.pendingModel === app.modelsDefault;
+    container.appendChild(buildModelOption(null, "Default", app.modelsDefault, defaultSelected));
   }
   for (const m of app.modelsList || []) {
     if (f && !(m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f))) continue;
@@ -555,15 +566,13 @@ function renderModelOptions(filter) {
     container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id));
   }
 
-  if (!container.children.length) {
-    if (f) {
-      container.innerHTML = `<div class="empty">Searching…</div>`;
-      const seq = modelSearchSeq;
-      modelSearchTimer = setTimeout(() => runLiveModelSearch(f, seq), 300);
-    } else {
-      container.innerHTML = `<div class="empty">No matching models.</div>`;
-    }
+  if (!f) {
+    if (!container.children.length) container.innerHTML = `<div class="empty">No matching models.</div>`;
+    return;
   }
+  if (!container.children.length) container.innerHTML = `<div class="empty">Searching…</div>`;
+  const seq = modelSearchSeq;
+  modelSearchTimer = setTimeout(() => runLiveModelSearch(f, seq), 300);
 }
 
 async function runLiveModelSearch(query, seq) {
@@ -1026,6 +1035,15 @@ document.getElementById("model-chip").addEventListener("click", async () => {
 document.getElementById("model-filter").addEventListener("input", (e) => renderModelOptions(e.target.value));
 document.getElementById("model-dialog-close").addEventListener("click", () => document.getElementById("model-dialog").close());
 closeDialogOnBackdropClick(document.getElementById("model-dialog"));
+// <dialog>'s native "close" event fires however it was closed (Escape, the
+// close button, or the backdrop-click handler above, which itself just
+// calls .close()) — one listener cancels a pending debounced live search
+// left over from typing right before closing, so it can't fire (and hit
+// the network) against a dialog that's no longer open.
+document.getElementById("model-dialog").addEventListener("close", () => {
+  if (modelSearchTimer) { clearTimeout(modelSearchTimer); modelSearchTimer = null; }
+  modelSearchSeq++; // also drop a live search that's already in flight
+});
 
 document.getElementById("scroll-bottom-btn").addEventListener("click", () => {
   const el = document.getElementById("transcript");

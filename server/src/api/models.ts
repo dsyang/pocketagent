@@ -5,11 +5,19 @@ import type { AppContext } from "../context.js";
 // The model picker's default view — a short, hand-picked list so opening the
 // dialog doesn't dump OpenRouter's entire multi-hundred-model catalog on the
 // user. GET /models returns only these unless the caller searches (?q=) for
-// something not in this list, in which case (and only then) the live
-// catalog is fetched and searched too. The current default model
-// (ctx.defaultModel) doesn't need an entry here — the client always pins it
-// at the top of the list separately.
-const CURATED_MODELS = [
+// something, in which case the live catalog is searched too (see the /models
+// handler below for why searches always check both, not curated-first).
+//
+// The current default model (ctx.defaultModel) doesn't strictly need an
+// entry here — the client always pins it at the top of the list separately
+// — but env.ts's DEFAULT_MODEL fallback is deliberately kept in sync with
+// the "deepseek/deepseek-v4-flash-0731" entry below (see models.test.ts's
+// "keeps DEFAULT_MODEL's fallback in the curated list" test), because the
+// client dedupes a curated row against the pinned Default row when their
+// ids match — if this list ever drops or renames that id without updating
+// env.ts (or vice versa), that dedupe silently becomes a no-op and the
+// default renders twice.
+export const CURATED_MODELS = [
   { id: "google/gemini-3.7-flash:batch", name: "Gemini 3.7 Flash (batch)" },
   { id: "deepseek/deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731" },
   { id: "z-ai/glm-5.2", name: "GLM 5.2" },
@@ -35,7 +43,7 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
   let cache: { at: number; models: Array<{ id: string; name: string }> } | null = null;
   let negativeCacheUntil = 0;
 
-  // Only called when a search misses the curated list — the live catalog is
+  // Only called when the caller searches (?q=) — the live catalog is
   // hundreds of entries, so it's fetched (and cached) on demand, not on
   // every /models request.
   async function fetchLiveModels(): Promise<Array<{ id: string; name: string }>> {
@@ -48,8 +56,15 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = (await res.json()) as { data?: Array<{ id: string; name?: string }> };
-      const models = (body.data ?? []).map((m) => ({ id: m.id, name: m.name ?? m.id }));
+      const body = (await res.json()) as { data?: Array<{ id?: unknown; name?: unknown }> };
+      // Defensive: an upstream entry missing `id` would otherwise become
+      // `{ id: undefined, name: undefined }`, which throws out of matches()'s
+      // .toLowerCase() the first time anyone searches — and since `cache` is
+      // set below before that ever happens, the broken array would stay
+      // cached (and every search would keep 500ing) for the full TTL.
+      const models = (body.data ?? [])
+        .filter((m): m is { id: string; name?: string } => typeof m.id === "string" && m.id.length > 0)
+        .map((m) => ({ id: m.id, name: typeof m.name === "string" && m.name ? m.name : m.id }));
       if (models.length > 0) {
         cache = { at: Date.now(), models };
         return models;
@@ -69,16 +84,19 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
       return { models: CURATED_MODELS, default: ctx.defaultModel };
     }
 
+    // Search both tiers and union them (curated first), rather than
+    // short-circuiting as soon as the curated set has any match — a
+    // curated id can otherwise permanently shadow a more specific live
+    // model whose id happens to be one of its substrings. E.g.
+    // "google/gemini-3.7-flash:batch" is curated, so every prefix of the
+    // *non*-batch "google/gemini-3.7-flash" — including its own full,
+    // exact slug — also substring-matches the curated entry, making the
+    // plain variant unreachable no matter what's typed. Capped: a broad
+    // query (e.g. a single letter) shouldn't dump hundreds of live results
+    // into the picker any more than the old unfiltered fetch did.
     const curatedMatches = CURATED_MODELS.filter((m) => matches(m, q));
-    if (curatedMatches.length > 0) {
-      return { models: curatedMatches, default: ctx.defaultModel };
-    }
-
-    // Nothing in the curated set matched — search the full live catalog.
-    // Capped: a broad query (e.g. a single letter) shouldn't dump hundreds
-    // of results into the picker any more than the old unfiltered fetch did.
     const live = await fetchLiveModels();
-    const liveMatches = live.filter((m) => matches(m, q)).slice(0, 50);
-    return { models: liveMatches, default: ctx.defaultModel };
+    const liveMatches = live.filter((m) => matches(m, q) && !curatedMatches.some((c) => c.id === m.id)).slice(0, 50);
+    return { models: [...curatedMatches, ...liveMatches], default: ctx.defaultModel };
   });
 }
