@@ -16,6 +16,7 @@ const CURATED_MODELS = [
   { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" },
   { id: "thinkingmachines/inkling-small", name: "Inkling Small" },
   { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "Nemotron 3 Ultra (free)" },
+  { id: "qwen/qwen3.7-flash", name: "Qwen3.7 Flash" },
 ];
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
