@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
 <title>Pocket Agent</title>
 <style>
   :root {
@@ -18,22 +18,12 @@
     --assistant-bubble: #1b1e24;
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
   body {
-    margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg);
     color: var(--text);
-    display: flex;
-    flex-direction: column;
   }
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 16px; border-bottom: 1px solid var(--border);
-    position: sticky; top: 0; background: var(--bg); z-index: 5;
-  }
-  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  header .actions { display: flex; gap: 8px; }
   button {
     background: var(--panel); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 8px 12px; font-size: 14px; cursor: pointer;
@@ -41,47 +31,172 @@
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: white; }
   button:disabled { opacity: 0.5; cursor: default; }
-  main { flex: 1; overflow-y: auto; }
-  #screen-settings, #screen-list, #screen-chat { display: none; height: 100%; flex-direction: column; }
-  #screen-settings.active, #screen-list.active, #screen-chat.active { display: flex; }
+  .icon-btn { padding: 0; width: 36px; height: 36px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-size: 17px; line-height: 1; flex-shrink: 0; }
+  .empty { padding: 32px; text-align: center; color: var(--muted); }
 
-  .form { padding: 16px; max-width: 480px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 12px; }
-  .form label { font-size: 13px; color: var(--muted); }
-  .form input, .form select { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 15px; width: 100%; }
+  /* ---------- chat shell (always mounted — the whole point of this redesign) ---------- */
+  #app-shell { display: flex; flex-direction: column; height: 100dvh; }
+  #chat-header {
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px;
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+  }
+  .model-chip {
+    justify-self: center; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    background: transparent; border: 1px solid transparent; border-radius: 999px;
+    padding: 7px 14px; font-size: 13px; font-weight: 600; color: var(--text);
+  }
+  .model-chip.editable:hover { border-color: var(--accent); color: var(--accent); }
+  .model-chip:disabled { cursor: default; opacity: 0.85; }
+  .header-actions { justify-self: end; display: flex; gap: 6px; }
 
-  #conv-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
-  #conv-list li { padding: 14px 16px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; gap: 8px; }
-  #conv-list li:hover { background: var(--panel); }
-  #conv-list .row-main { flex: 1; min-width: 0; }
-  #conv-list .row1 { display: flex; justify-content: space-between; gap: 8px; }
-  #conv-list .title { font-weight: 600; font-size: 15px; }
-  #conv-list .model { color: var(--muted); font-size: 12px; }
-  #conv-list .preview { color: var(--muted); font-size: 13px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #conv-list .badge { font-size: 11px; color: var(--accent); }
-  #conv-list .archive-btn { flex-shrink: 0; padding: 6px 10px; font-size: 12px; }
-  #load-more { margin: 12px auto; }
-  #list-archive-toggle.active { border-color: var(--accent); color: var(--accent); }
-
+  #chat-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
   #transcript { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-  .bubble { max-width: 85%; padding: 10px 14px; border-radius: 14px; line-height: 1.45; font-size: 15px; white-space: pre-wrap; word-wrap: break-word; }
-  .bubble.user { align-self: flex-end; background: var(--user-bubble); }
-  .bubble.assistant { align-self: flex-start; background: var(--assistant-bubble); }
+  #scroll-bottom-btn { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--panel); box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
+
+  .bubble { max-width: 88%; padding: 10px 14px; border-radius: 16px; line-height: 1.6; font-size: 15.5px; white-space: pre-wrap; word-wrap: break-word; }
+  .bubble.user { align-self: flex-end; max-width: 78%; background: var(--user-bubble); border-bottom-right-radius: 4px; }
+  .bubble.assistant { align-self: flex-start; background: var(--assistant-bubble); border-bottom-left-radius: 4px; }
   .bubble code { background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 4px; font-size: 0.9em; }
-  .tool-row { align-self: flex-start; font-size: 12px; color: var(--muted); font-style: italic; }
+  .bubble pre { overflow-x: auto; }
   .citations { font-size: 12px; margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
   .citations a { color: var(--accent); text-decoration: none; }
+
+  .tool-chip {
+    align-self: flex-start; display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--muted); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 999px; padding: 5px 12px;
+  }
+  .thinking-row { align-self: flex-start; display: flex; gap: 4px; padding: 8px 4px; }
+  .thinking-row .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+  .thinking-row .dot:nth-child(2) { animation-delay: 0.2s; }
+  .thinking-row .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+
   .status-row { align-self: center; font-size: 12px; color: var(--muted); }
   .status-row.error { color: var(--danger); }
 
-  #composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); }
-  #composer textarea { flex: 1; resize: none; background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 15px; font-family: inherit; max-height: 140px; }
-  #cancel-btn { display: none; }
-  #cancel-btn.active { display: inline-block; }
+  #composer { display: flex; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
+  #composer textarea {
+    flex: 1; resize: none; background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 12px; padding: 10px 12px; font-size: 15px; font-family: inherit; max-height: 140px; line-height: 1.4;
+  }
 
-  .empty { padding: 32px; text-align: center; color: var(--muted); }
+  /* ---------- sidebar: the conversation list, an overlay drawer at every width ---------- */
+  #sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; width: min(320px, 86vw);
+    background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; z-index: 20;
+    transform: translateX(-100%); transition: transform 0.22s ease;
+    padding-top: env(safe-area-inset-top);
+  }
+  body.sidebar-open #sidebar { transform: translateX(0); }
+  #scrim {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 15;
+    opacity: 0; pointer-events: none; transition: opacity 0.22s ease;
+  }
+  body.sidebar-open #scrim { opacity: 1; pointer-events: auto; }
+
+  .sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 12px 8px; }
+  .sidebar-header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .sidebar-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; }
+  .sidebar-toolbar #sidebar-new { flex: 1; }
+  .sidebar-footer { padding: 10px 12px; border-top: 1px solid var(--border); }
+  .sidebar-footer button { width: 100%; }
+
+  #conv-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+  #conv-list li { padding: 12px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  #conv-list li:hover { background: rgba(255,255,255,0.03); }
+  #conv-list .row-main { flex: 1; min-width: 0; }
+  #conv-list .row1 { display: flex; justify-content: space-between; gap: 8px; }
+  #conv-list .title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #conv-list .model { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+  #conv-list .preview { color: var(--muted); font-size: 12px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #conv-list .badge { font-size: 11px; color: var(--accent); }
+  #conv-list .archive-btn { flex-shrink: 0; padding: 6px 10px; font-size: 12px; }
+  #load-more { margin: 10px 12px; }
+  #sidebar-archive-toggle.active { border-color: var(--accent); color: var(--accent); }
+
+  /* ---------- model picker ---------- */
+  dialog#model-dialog {
+    border: none; border-radius: 14px; padding: 0; background: var(--panel); color: var(--text);
+    width: min(420px, 92vw); max-height: 70vh;
+  }
+  dialog#model-dialog[open] { display: flex; flex-direction: column; }
+  dialog#model-dialog::backdrop { background: rgba(0,0,0,0.55); }
+  .dialog-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 8px; }
+  .dialog-header h2 { font-size: 15px; margin: 0; font-weight: 600; }
+  #model-filter {
+    margin: 0 14px 10px; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 9px 10px; font-size: 14px;
+  }
+  #model-options { overflow-y: auto; padding: 0 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+  .model-option {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    width: 100%; text-align: left; background: transparent; border: 1px solid transparent;
+    border-radius: 8px; padding: 9px 10px; font-size: 14px;
+  }
+  .model-option:hover { background: rgba(255,255,255,0.05); border-color: transparent; }
+  .model-option.selected { color: var(--accent); }
+  .model-option .check { font-size: 13px; }
+
+  /* ---------- settings gate ---------- */
+  #screen-settings { display: none; height: 100dvh; flex-direction: column; }
+  body.settings-active #screen-settings { display: flex; }
+  body.settings-active #app-shell, body.settings-active #sidebar, body.settings-active #scrim { display: none; }
+  #screen-settings header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  #screen-settings h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .form { padding: 16px; max-width: 480px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 12px; }
+  .form label { font-size: 13px; color: var(--muted); }
+  .form input { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 15px; width: 100%; }
+  .form-actions { display: flex; gap: 8px; }
 </style>
 </head>
 <body>
+
+<div id="app-shell">
+  <div id="chat-header">
+    <button id="menu-btn" class="icon-btn" type="button" aria-label="Conversations">&#9776;</button>
+    <button id="model-chip" class="model-chip" type="button">Default</button>
+    <div class="header-actions">
+      <button id="cancel-btn" type="button" style="display:none">Stop</button>
+      <button id="archive-btn" type="button" style="display:none">Archive</button>
+    </div>
+  </div>
+  <div id="chat-body">
+    <div id="transcript"><div id="stream-tail"></div></div>
+    <button id="scroll-bottom-btn" class="icon-btn" type="button" style="display:none" aria-label="Scroll to latest">&#8595;</button>
+  </div>
+  <form id="composer">
+    <textarea id="composer-input" rows="1" placeholder="Message…"></textarea>
+    <button class="primary" id="composer-send" type="submit">Send</button>
+  </form>
+</div>
+
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <h1 id="sidebar-title">Chats</h1>
+    <button id="sidebar-close" class="icon-btn" type="button" aria-label="Close">&times;</button>
+  </div>
+  <div class="sidebar-toolbar">
+    <button class="primary" id="sidebar-new" type="button">New chat</button>
+    <button id="sidebar-archive-toggle" type="button">Archived</button>
+  </div>
+  <ul id="conv-list"></ul>
+  <button id="load-more" type="button" style="display:none">Load more</button>
+  <div class="sidebar-footer">
+    <button id="sidebar-settings" type="button">Settings</button>
+  </div>
+</aside>
+<div id="scrim"></div>
+
+<dialog id="model-dialog">
+  <div class="dialog-header">
+    <h2>Model</h2>
+    <button id="model-dialog-close" class="icon-btn" type="button" aria-label="Close">&times;</button>
+  </div>
+  <input id="model-filter" placeholder="Filter models…" />
+  <div id="model-options"></div>
+</dialog>
 
 <div id="screen-settings">
   <header><h1>Pocket Agent — Settings</h1></header>
@@ -90,39 +205,11 @@
     <input id="set-url" placeholder="https://pi-name.tailnet.ts.net" />
     <label for="set-token">Bearer token</label>
     <input id="set-token" type="password" placeholder="paste your token" />
-    <button class="primary" id="set-save">Save &amp; continue</button>
+    <div class="form-actions">
+      <button class="primary" id="set-save" type="button">Save &amp; continue</button>
+      <button id="set-cancel" type="button" style="display:none">Cancel</button>
+    </div>
   </div>
-</div>
-
-<div id="screen-list">
-  <header>
-    <h1 id="list-title">Conversations</h1>
-    <div class="actions">
-      <button id="list-archive-toggle">Archived</button>
-      <button id="list-settings">Settings</button>
-      <button class="primary" id="list-new">New chat</button>
-    </div>
-  </header>
-  <ul id="conv-list"></ul>
-  <button id="load-more" style="display:none">Load more</button>
-</div>
-
-<div id="screen-chat">
-  <header>
-    <div class="actions">
-      <button id="chat-back">&larr; Back</button>
-    </div>
-    <h1 id="chat-title">Chat</h1>
-    <div class="actions">
-      <button id="cancel-btn">Stop</button>
-      <button id="archive-btn">Archive</button>
-    </div>
-  </header>
-  <div id="transcript"></div>
-  <form id="composer">
-    <textarea id="composer-input" rows="1" placeholder="Message…"></textarea>
-    <button class="primary" id="composer-send" type="submit">Send</button>
-  </form>
 </div>
 
 <script>
@@ -136,10 +223,23 @@ function renderMarkdown(text) {
   let html = escapeHtml(text);
   html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code}</code></pre>`);
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  // Emphasis must not run inside code. escapeHtml() has already removed every
+  // raw "<" from the input, so a <!c0> sentinel cannot collide with user text.
+  const codeSpans = [];
+  html = html.replace(/<code>[\s\S]*?<\/code>/g, (m) => `<!c${codeSpans.push(m) - 1}>`);
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  // The agent loop marks a cancelled run's text with _[stopped]_ (loop.ts) — underscore-style, not asterisk.
+  // Word-boundary anchored (as CommonMark requires for _) so snake_case and __init__ are left alone.
+  html = html.replace(/(^|[^\w\\])_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/<!c(\d+)>/g, (_, i) => codeSpans[Number(i)]);
   return html;
+}
+function shortModelName(id) {
+  if (!id) return "";
+  const parts = id.split("/");
+  return parts[parts.length - 1];
 }
 
 // ---------- storage / settings ----------
@@ -248,13 +348,25 @@ function foldEvent(state, seq, type, payload) {
   return state;
 }
 
-// ---------- app state / routing ----------
-const app = { conv: null, convArchived: false, nextCursor: null, transcript: null, unsubscribe: null, watchdog: null, showingArchived: false };
-
-function showScreen(id) {
-  for (const el of document.querySelectorAll("#screen-settings, #screen-list, #screen-chat")) el.classList.remove("active");
-  document.getElementById(id).classList.add("active");
-}
+// ---------- app state ----------
+// app.conv === null means "draft": no conversation row exists yet, the model
+// is still choosable, and the first send() is what actually creates it.
+const app = {
+  conv: null,
+  convArchived: false,
+  convModel: null,
+  pendingModel: null, // model chosen for the *next* conversation to be created; null = server default
+  modelsDefault: null,
+  modelsList: null, // null = not fetched yet
+  nextCursor: null,
+  transcript: null,
+  unsubscribe: null,
+  watchdog: null,
+  showingArchived: false,
+  pendingSend: null, // { clientMessageId, content } — kept across a failed send so retrying the same text is idempotent
+  renderedMessageCount: 0,
+  renderedForTranscript: null,
+};
 
 function timeAgo(ms) {
   if (!ms) return "";
@@ -265,41 +377,80 @@ function timeAgo(ms) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-// ---------- list screen ----------
-async function loadList(reset) {
+// ---------- sidebar (drawer) ----------
+// Opening the drawer must NOT touch the chat's SSE subscription — you can
+// browse conversations while an answer keeps streaming behind it.
+function openSidebar() {
+  document.body.classList.add("sidebar-open");
+  loadConversationList(true);
+}
+function closeSidebar() {
+  document.body.classList.remove("sidebar-open");
+}
+function toggleSidebar() {
+  if (document.body.classList.contains("sidebar-open")) closeSidebar();
+  else openSidebar();
+}
+
+function updateArchiveToggleLabel() {
+  const btn = document.getElementById("sidebar-archive-toggle");
+  btn.textContent = app.showingArchived ? "Back to inbox" : "Archived";
+  btn.classList.toggle("active", app.showingArchived);
+  document.getElementById("sidebar-title").textContent = app.showingArchived ? "Archived" : "Chats";
+}
+
+let convListSeq = 0;
+async function loadConversationList(reset) {
   const listEl = document.getElementById("conv-list");
+  const seq = ++convListSeq;
+  const archived = app.showingArchived; // snapshot: app.showingArchived can change before this request resolves
   if (reset) { listEl.innerHTML = ""; app.nextCursor = null; }
-  const params = [`limit=30`, `archived=${app.showingArchived}`];
+  const params = [`limit=30`, `archived=${archived}`];
   if (app.nextCursor) params.push(`before=${encodeURIComponent(app.nextCursor)}`);
-  const result = await apiJson(`/conversations?${params.join("&")}`);
+  let result;
+  try {
+    result = await apiJson(`/conversations?${params.join("&")}`);
+  } catch (err) {
+    if (seq === convListSeq && reset) listEl.innerHTML = `<div class="empty">Could not load conversations.</div>`;
+    return;
+  }
+  if (seq !== convListSeq) return; // superseded by a newer load (drawer reopened / archived toggle flipped again)
   app.nextCursor = result.nextCursor;
   document.getElementById("load-more").style.display = result.nextCursor ? "block" : "none";
 
   if (reset && result.items.length === 0) {
-    listEl.innerHTML = `<div class="empty">${app.showingArchived ? "No archived conversations." : "No conversations yet. Start one!"}</div>`;
+    listEl.innerHTML = `<div class="empty">${archived ? "No archived conversations." : "No conversations yet."}</div>`;
     return;
   }
   for (const c of result.items) {
     const li = document.createElement("li");
     const main = document.createElement("div");
     main.className = "row-main";
+    const heading = c.title || c.lastMessagePreview || "(new conversation)";
+    const sub = c.title && c.lastMessagePreview ? c.lastMessagePreview : "";
     main.innerHTML = `
-      <div class="row1"><span class="title">${escapeHtml(c.title || "(untitled)")}</span><span class="model">${escapeHtml(c.model)}</span></div>
-      <div class="preview">${escapeHtml(c.lastMessagePreview || "")}</div>
-      <div class="row1"><span class="badge">${c.activeRunStatus ? "● " + c.activeRunStatus : ""}</span><span class="model">${timeAgo(c.updatedAt)}</span></div>
+      <div class="row1"><span class="title">${escapeHtml(heading)}</span><span class="model">${escapeHtml(shortModelName(c.model))}</span></div>
+      ${sub ? `<div class="preview">${escapeHtml(sub)}</div>` : ""}
+      <div class="row1"><span class="badge">${c.activeRunStatus ? "● " + escapeHtml(c.activeRunStatus) : ""}</span><span class="model">${timeAgo(c.updatedAt)}</span></div>
     `;
-    main.addEventListener("click", () => openChat(c.id, c.title));
+    main.addEventListener("click", () => openChat(c.id));
     li.appendChild(main);
 
     const archiveBtn = document.createElement("button");
     archiveBtn.className = "archive-btn";
-    archiveBtn.textContent = app.showingArchived ? "Unarchive" : "Archive";
+    archiveBtn.textContent = archived ? "Unarchive" : "Archive";
     archiveBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       archiveBtn.disabled = true;
       try {
-        await setArchived(c.id, !app.showingArchived);
+        await setArchived(c.id, !archived);
         li.remove();
+        if (app.conv === c.id) {
+          app.convArchived = !archived;
+          updateArchiveButton();
+          const runActive = !!app.transcript && (app.transcript.runStatus === "queued" || app.transcript.runStatus === "running");
+          updateComposerState(runActive);
+        }
       } catch (err) {
         archiveBtn.disabled = false;
         alert(`Failed: ${err.message}`);
@@ -315,76 +466,188 @@ async function setArchived(conversationId, archived) {
   await apiJson(`/conversations/${conversationId}/${archived ? "archive" : "unarchive"}`, { method: "POST" });
 }
 
-async function showList(archived) {
-  teardownChat();
-  app.conv = null;
-  app.transcript = null;
-  if (archived !== undefined) app.showingArchived = archived;
-  document.getElementById("list-title").textContent = app.showingArchived ? "Archived" : "Conversations";
-  document.getElementById("list-archive-toggle").classList.toggle("active", app.showingArchived);
-  document.getElementById("list-archive-toggle").textContent = app.showingArchived ? "Back to inbox" : "Archived";
-  showScreen("screen-list");
-  await loadList(true);
+// ---------- model chip + picker ----------
+let modelsPromise = null;
+async function ensureModelsLoaded() {
+  if (app.modelsList) return;
+  // Cache the in-flight promise, not the result: boot() kicks one off
+  // un-awaited, and on failure modelsList must stay null so a later chip tap
+  // retries — caching [] here is truthy and would wedge the picker on
+  // "No matching models." for the rest of the session.
+  if (!modelsPromise) {
+    modelsPromise = apiJson("/models")
+      .then((res) => {
+        app.modelsList = res.models || [];
+        app.modelsDefault = res.default || null;
+      })
+      .catch(() => {})
+      .finally(() => { modelsPromise = null; });
+  }
+  await modelsPromise;
+  updateModelChip();
 }
 
-// ---------- chat screen ----------
-function teardownChat() {
-  if (app.unsubscribe) { app.unsubscribe(); app.unsubscribe = null; }
-  if (app.watchdog) { clearTimeout(app.watchdog); app.watchdog = null; }
+function updateModelChip() {
+  const chip = document.getElementById("model-chip");
+  if (app.conv) {
+    chip.textContent = shortModelName(app.convModel) || "Model";
+    chip.disabled = true;
+    chip.classList.remove("editable");
+  } else {
+    const label = app.pendingModel ? shortModelName(app.pendingModel) : (app.modelsDefault ? shortModelName(app.modelsDefault) : "Default");
+    chip.textContent = label;
+    chip.disabled = false;
+    chip.classList.add("editable");
+  }
 }
 
-function renderTranscript() {
+function renderModelOptions(filter) {
+  const container = document.getElementById("model-options");
+  container.innerHTML = "";
+  const f = (filter || "").trim().toLowerCase();
+
+  const addOption = (id, label, isDefault) => {
+    const opt = document.createElement("button");
+    opt.type = "button";
+    opt.className = "model-option";
+    const selected = isDefault ? !app.pendingModel : app.pendingModel === id;
+    if (selected) opt.classList.add("selected");
+    opt.innerHTML = `<span>${escapeHtml(label)}</span>${selected ? '<span class="check">✓</span>' : ""}`;
+    opt.addEventListener("click", () => {
+      app.pendingModel = isDefault ? null : id;
+      updateModelChip();
+      document.getElementById("model-dialog").close();
+    });
+    container.appendChild(opt);
+  };
+
+  if (!f && app.modelsDefault) {
+    addOption(app.modelsDefault, `Default (${shortModelName(app.modelsDefault)})`, true);
+  }
+  for (const m of app.modelsList || []) {
+    if (f && !(m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f))) continue;
+    addOption(m.id, m.name || m.id, false);
+  }
+  if (!container.children.length) {
+    container.innerHTML = `<div class="empty">No matching models.</div>`;
+  }
+}
+
+// Backdrop-click-to-close: <dialog> only gives us Esc/cancel for free, not a
+// click outside its box (the "backdrop" isn't a normal click target).
+function closeDialogOnBackdropClick(dialog) {
+  dialog.addEventListener("click", (e) => {
+    const r = dialog.getBoundingClientRect();
+    const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    if (!inside) dialog.close();
+  });
+}
+
+// ---------- chat: DOM rendering ----------
+function resetChatDom() {
   const el = document.getElementById("transcript");
   el.innerHTML = "";
-  const state = app.transcript;
-  for (const m of state.messages) {
-    const b = document.createElement("div");
-    b.className = `bubble ${m.role}`;
-    b.innerHTML = renderMarkdown(m.content);
-    if (m.citations && m.citations.length) {
-      const c = document.createElement("div");
-      c.className = "citations";
-      c.innerHTML = m.citations.map((cite) => {
-        // Citations come from tool_result/web_search payloads — third-party
-        // data, not first-party — so both the scheme and the attribute value
-        // need to be treated as untrusted.
-        const safeUrl = /^https?:\/\//i.test(cite.url) ? cite.url : "#";
-        return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener">${escapeHtml(cite.title || cite.url)}</a>`;
-      }).join("");
-      b.appendChild(c);
-    }
-    el.appendChild(b);
+  const tail = document.createElement("div");
+  tail.id = "stream-tail";
+  el.appendChild(tail);
+  app.renderedMessageCount = 0;
+  app.renderedForTranscript = null;
+  document.getElementById("scroll-bottom-btn").style.display = "none";
+}
+
+function isNearBottom(el, threshold = 96) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+}
+
+function buildMessageBubble(m) {
+  const b = document.createElement("div");
+  b.className = `bubble ${m.role}`;
+  b.innerHTML = renderMarkdown(m.content);
+  if (m.citations && m.citations.length) {
+    const c = document.createElement("div");
+    c.className = "citations";
+    c.innerHTML = m.citations.map((cite) => {
+      // Citations come from tool_result/web_search payloads — third-party
+      // data, not first-party — so both the scheme and the attribute value
+      // need to be treated as untrusted.
+      const safeUrl = /^https?:\/\//i.test(cite.url) ? cite.url : "#";
+      return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener">${escapeHtml(cite.title || cite.url)}</a>`;
+    }).join("");
+    b.appendChild(c);
   }
+  return b;
+}
+
+// Settled messages only grow (or, on a rolled-back optimistic send, shrink by
+// one) — so the common case appends new bubbles in place instead of wiping
+// and rebuilding the whole transcript on every token, which used to reset
+// scroll position and any in-progress text selection. Only the small
+// streaming tail (tool chips / partial answer) is rebuilt each call.
+function renderTranscript() {
+  const el = document.getElementById("transcript");
+  const tail = document.getElementById("stream-tail");
+  const state = app.transcript;
+  if (!state) return;
+  const wasNearBottom = isNearBottom(el);
+
+  if (app.renderedForTranscript !== state || state.messages.length < app.renderedMessageCount) {
+    while (el.firstChild && el.firstChild !== tail) el.removeChild(el.firstChild);
+    app.renderedMessageCount = 0;
+    app.renderedForTranscript = state;
+  }
+  for (let i = app.renderedMessageCount; i < state.messages.length; i++) {
+    el.insertBefore(buildMessageBubble(state.messages[i]), tail);
+  }
+  app.renderedMessageCount = state.messages.length;
+
+  tail.innerHTML = "";
   if (state.streaming) {
     for (const t of state.streaming.tools) {
       const row = document.createElement("div");
-      row.className = "tool-row";
+      row.className = "tool-chip";
       row.textContent = t.summary ? t.summary : `Searching: ${t.query}`;
-      el.appendChild(row);
+      tail.appendChild(row);
     }
     if (state.streaming.text) {
-      const b = document.createElement("div");
-      b.className = "bubble assistant";
-      b.innerHTML = renderMarkdown(state.streaming.text);
-      el.appendChild(b);
+      tail.appendChild(buildMessageBubble({ role: "assistant", content: state.streaming.text, citations: null }));
     }
   }
   const active = state.runStatus === "queued" || state.runStatus === "running";
-  if (active) {
-    const s = document.createElement("div");
-    s.className = "status-row";
-    s.textContent = state.streaming && state.streaming.tools.length === 0 && !state.streaming.text ? "Thinking…" : "";
-    if (s.textContent) el.appendChild(s);
+  if (active && state.streaming && state.streaming.tools.length === 0 && !state.streaming.text) {
+    const thinking = document.createElement("div");
+    thinking.className = "thinking-row";
+    thinking.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+    tail.appendChild(thinking);
   }
   if (state.error) {
     const e = document.createElement("div");
     e.className = "status-row error";
     e.textContent = state.error;
-    el.appendChild(e);
+    tail.appendChild(e);
   }
-  el.scrollTop = el.scrollHeight;
-  document.getElementById("cancel-btn").classList.toggle("active", active);
+  if (!state.streaming && !state.error && state.messages.length === 0) {
+    const emptyEl = document.createElement("div");
+    emptyEl.className = "empty";
+    emptyEl.textContent = app.conv ? "No messages yet." : "Ask anything to get started.";
+    tail.appendChild(emptyEl);
+  }
+
+  if (wasNearBottom) {
+    el.scrollTop = el.scrollHeight;
+    document.getElementById("scroll-bottom-btn").style.display = "none";
+  } else {
+    document.getElementById("scroll-bottom-btn").style.display = isNearBottom(el) ? "none" : "flex";
+  }
+
+  document.getElementById("cancel-btn").style.display = active ? "" : "none";
   updateComposerState(active);
+}
+
+function updateArchiveButton() {
+  const btn = document.getElementById("archive-btn");
+  if (!app.conv) { btn.style.display = "none"; return; }
+  btn.style.display = "";
+  btn.textContent = app.convArchived ? "Unarchive" : "Archive";
 }
 
 // Archived conversations are read-only server-side (409 on send) — reflect
@@ -397,6 +660,17 @@ function updateComposerState(active) {
   sendBtn.disabled = active || app.convArchived;
   input.disabled = app.convArchived;
   input.placeholder = app.convArchived ? "Archived — unarchive to reply" : "Message…";
+}
+
+function autoGrowTextarea(el) {
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, 140) + "px";
+}
+
+// ---------- SSE subscription ----------
+function teardownChat() {
+  if (app.unsubscribe) { app.unsubscribe(); app.unsubscribe = null; }
+  if (app.watchdog) { clearTimeout(app.watchdog); app.watchdog = null; }
 }
 
 function subscribe(conversationId, after) {
@@ -471,32 +745,60 @@ function subscribe(conversationId, after) {
   };
 }
 
-async function openChat(id, title) {
-  app.conv = id;
-  // Reset archived-derived UI synchronously, before the await below — otherwise
-  // a chat opened right after an archived one briefly (or, if the fetch below
-  // fails, indefinitely) shows the PREVIOUS chat's Archive/Unarchive label and
-  // composer lock state while app.conv already points at the new conversation.
+// ---------- chat lifecycle ----------
+// Bumped by every gesture that changes which conversation the view owns
+// (newDraft, openChat) so a slow, now-superseded async op — a snapshot
+// fetch, a conversation-creation POST — can detect it lost the race and
+// avoid clobbering whatever the view has since moved on to.
+let viewSeq = 0;
+
+function newDraft() {
+  viewSeq++;
+  ensureConvPromise = null; // don't let a fresh draft's send reattach to a now-abandoned conversation-creation POST
+  teardownChat();
+  app.conv = null;
   app.convArchived = false;
-  document.getElementById("archive-btn").textContent = "Archive";
-  updateComposerState(true); // disabled while loading, same as the "active run" case
-  document.getElementById("chat-title").textContent = title || "Chat";
-  showScreen("screen-chat");
-  document.getElementById("transcript").innerHTML = '<div class="empty">Loading…</div>';
+  app.convModel = null;
+  app.pendingSend = null;
+  app.transcript = initialTranscriptState([]);
+  resetChatDom();
+  updateModelChip();
+  updateArchiveButton();
+  renderTranscript();
+  closeSidebar();
+  document.getElementById("composer-input").focus();
+}
+
+async function openChat(id) {
+  const seq = ++viewSeq;
+  ensureConvPromise = null; // same reasoning as newDraft(): don't reattach to a stale draft's in-flight creation
+  teardownChat();
+  app.conv = id;
+  app.convArchived = false;
+  app.convModel = null;
+  app.pendingSend = null;
+  updateModelChip();
+  updateArchiveButton();
+  resetChatDom();
+  document.getElementById("stream-tail").innerHTML = '<div class="empty">Loading…</div>';
+  closeSidebar();
 
   let snapshot;
   try {
     snapshot = await apiJson(`/conversations/${id}`);
   } catch (err) {
+    if (seq !== viewSeq) return; // a newer navigation already owns the view
     alert(`Could not open chat: ${err.message}`);
-    return showList();
+    newDraft();
+    return;
   }
-  document.getElementById("chat-title").textContent = snapshot.conversation.title || snapshot.conversation.model;
+  if (seq !== viewSeq) return; // superseded while the snapshot was in flight
+  app.convModel = snapshot.conversation.model;
   app.convArchived = !!snapshot.conversation.archivedAt;
-  document.getElementById("archive-btn").textContent = app.convArchived ? "Unarchive" : "Archive";
+  updateModelChip();
+  updateArchiveButton();
+
   app.transcript = initialTranscriptState(snapshot.messages);
-  app.transcript.cursor = 0; // events carry absolute seq; start folding from 0 so nothing before `after` is skipped incorrectly
-  renderTranscript();
 
   // The snapshot's `messages` are only finalized rows — an in-flight run's
   // partial text exists solely as assistant_delta events in run_events, which
@@ -510,66 +812,179 @@ async function openChat(id, title) {
     app.transcript.runStatus = snapshot.activeRun.status;
     app.transcript.streaming = { runId: snapshot.activeRun.id, text: "", tools: [] };
   }
+  renderTranscript();
   subscribe(id, after);
+}
+
+// Conversations are created lazily, on first send — not when "New chat" is
+// tapped — so the model stays choosable (via the chip) right up until then,
+// and tapping "New chat" never litters the list with empty rows.
+//
+// Returns the id of the conversation the caller's message should be posted
+// to. The send button isn't disabled until run_started arrives over SSE
+// (updateComposerState is only ever driven by renderTranscript), so two
+// sends from the same draft can both see app.conv === null —
+// ensureConvPromise shares one in-flight POST instead of creating two
+// conversations and stranding the first message. And if the view moves on
+// (New chat tapped, or a
+// different conversation opened) while this POST is still in flight, the
+// viewSeq check below skips installing it as app.conv/the active
+// subscription — the newer view keeps ownership — while still returning
+// the created id so the caller can send its message to the conversation it
+// actually belongs to, not to whatever the view now shows.
+let ensureConvPromise = null;
+async function ensureConversation() {
+  if (app.conv) return app.conv;
+  if (ensureConvPromise) return ensureConvPromise;
+  const seq = viewSeq;
+  const p = (async () => {
+    const body = app.pendingModel ? { model: app.pendingModel } : {};
+    const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify(body) });
+    if (seq === viewSeq) {
+      app.conv = conv.id;
+      app.convModel = conv.model;
+      app.convArchived = false;
+      updateModelChip();
+      updateArchiveButton();
+      subscribe(conv.id, 0);
+    }
+    return conv.id;
+  })();
+  ensureConvPromise = p;
+  try {
+    return await p;
+  } finally {
+    // Only clear our own slot — newDraft()/openChat() may already have
+    // reset it to null (or a newer call replaced it) while we were in
+    // flight, and clobbering that would let a later call double-create.
+    if (ensureConvPromise === p) ensureConvPromise = null;
+  }
 }
 
 async function sendMessage() {
   const input = document.getElementById("composer-input");
+  const sendBtn = document.getElementById("composer-send");
   const content = input.value.trim();
-  if (!content || !app.conv || app.convArchived) return;
+  if (!content || app.convArchived || sendBtn.disabled) return;
+
   input.value = "";
-  const optimistic = { id: `local_${Date.now()}`, role: "user", content, citations: null };
-  app.transcript.messages.push(optimistic);
-  renderTranscript();
+  autoGrowTextarea(input);
+
+  let targetConv;
   try {
-    await apiJson(`/conversations/${app.conv}/messages`, {
+    targetConv = await ensureConversation();
+  } catch (err) {
+    input.value = content;
+    autoGrowTextarea(input);
+    alert(`Could not start chat: ${err.message}`);
+    return;
+  }
+
+  // Reuse the same clientMessageId across a retry of the exact same text so
+  // the server's idempotent-send dedup actually engages; a genuinely new
+  // message (different text) always gets a fresh id.
+  if (!app.pendingSend || app.pendingSend.content !== content) {
+    app.pendingSend = { clientMessageId: `web_${Date.now()}_${Math.random().toString(36).slice(2)}`, content };
+  }
+  const clientMessageId = app.pendingSend.clientMessageId;
+
+  // Only render the optimistic bubble into the transcript if we're still
+  // looking at targetConv — ensureConversation() may have created it while
+  // the view moved on elsewhere, in which case the message still needs to
+  // go to the right conversation, but the local transcript it appears in
+  // (if any) belongs to whatever's open when the request actually settles.
+  const showOptimistically = app.conv === targetConv;
+  const optimistic = { id: `local_${clientMessageId}`, role: "user", content, citations: null };
+  if (showOptimistically) {
+    app.transcript.messages.push(optimistic);
+    renderTranscript();
+  }
+
+  try {
+    await apiJson(`/conversations/${targetConv}/messages`, {
       method: "POST",
-      body: JSON.stringify({ content, clientMessageId: `web_${Date.now()}_${Math.random().toString(36).slice(2)}` }),
+      body: JSON.stringify({ content, clientMessageId }),
     });
+    app.pendingSend = null;
   } catch (err) {
     // Roll back the optimistic bubble and give the text back — otherwise a
     // stale token, an unreachable server, or a 409 (a run is already active)
     // renders as if the message were accepted, with no run ever queued and
-    // no way to resend without retyping it.
-    const i = app.transcript.messages.indexOf(optimistic);
-    if (i !== -1) app.transcript.messages.splice(i, 1);
-    input.value = content;
-    renderTranscript();
+    // no way to resend without retyping it. Only touch the transcript/input
+    // if the view is still showing targetConv — if the user has since
+    // navigated elsewhere, there's no optimistic bubble on screen to roll
+    // back and the current composer belongs to a different conversation.
+    if (showOptimistically) {
+      const i = app.transcript.messages.indexOf(optimistic);
+      if (i !== -1) app.transcript.messages.splice(i, 1);
+      input.value = content;
+      autoGrowTextarea(input);
+      renderTranscript();
+    }
     alert(`Send failed: ${err.message}`);
   }
 }
 
 async function cancelActiveRun() {
   if (!app.transcript || !app.transcript.streaming) return;
-  await apiFetch(`/runs/${app.transcript.streaming.runId}/cancel`, { method: "POST" });
+  const btn = document.getElementById("cancel-btn");
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(`/runs/${app.transcript.streaming.runId}/cancel`, { method: "POST" });
+    if (!res.ok) alert(`Could not stop the run: HTTP ${res.status}`);
+  } catch (err) {
+    alert(`Could not stop the run: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- settings gate ----------
+function showSettingsScreen() {
+  document.getElementById("set-url").value = store.url;
+  document.getElementById("set-token").value = store.token;
+  document.getElementById("set-cancel").style.display = store.url ? "" : "none";
+  document.body.classList.remove("sidebar-open");
+  document.body.classList.add("settings-active");
 }
 
 // ---------- wiring ----------
-document.getElementById("set-save").addEventListener("click", () => {
-  store.url = document.getElementById("set-url").value.trim();
-  store.token = document.getElementById("set-token").value.trim();
-  boot();
+document.getElementById("menu-btn").addEventListener("click", toggleSidebar);
+document.getElementById("sidebar-close").addEventListener("click", closeSidebar);
+document.getElementById("scrim").addEventListener("click", closeSidebar);
+document.getElementById("sidebar-new").addEventListener("click", newDraft);
+document.getElementById("sidebar-archive-toggle").addEventListener("click", () => {
+  app.showingArchived = !app.showingArchived;
+  updateArchiveToggleLabel();
+  loadConversationList(true);
 });
-document.getElementById("list-settings").addEventListener("click", () => {
-  document.getElementById("set-url").value = store.url;
-  document.getElementById("set-token").value = store.token;
-  showScreen("screen-settings");
+document.getElementById("load-more").addEventListener("click", () => loadConversationList(false));
+document.getElementById("sidebar-settings").addEventListener("click", showSettingsScreen);
+
+document.getElementById("model-chip").addEventListener("click", async () => {
+  if (app.conv) return; // fixed once the conversation exists
+  await ensureModelsLoaded();
+  document.getElementById("model-filter").value = "";
+  renderModelOptions("");
+  document.getElementById("model-dialog").showModal();
+  document.getElementById("model-filter").focus();
 });
-document.getElementById("list-new").addEventListener("click", async () => {
-  let models = [];
-  try { models = (await apiJson("/models")).models; } catch {}
-  // Never silently commit to models[0] (an arbitrary entry from OpenRouter's
-  // /models response, with arbitrary pricing) — ask, and let a blank answer
-  // defer to the server's configured DEFAULT_MODEL instead of guessing.
-  const suggestion = models[0] ? ` (blank = server default, e.g. ${models[0].id})` : " (blank = server default)";
-  const input = prompt(`Model id${suggestion}:`);
-  if (input === null) return; // cancelled
-  const body = input.trim() ? { model: input.trim() } : {};
-  const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify(body) });
-  await openChat(conv.id, conv.title);
+document.getElementById("model-filter").addEventListener("input", (e) => renderModelOptions(e.target.value));
+document.getElementById("model-dialog-close").addEventListener("click", () => document.getElementById("model-dialog").close());
+closeDialogOnBackdropClick(document.getElementById("model-dialog"));
+
+document.getElementById("scroll-bottom-btn").addEventListener("click", () => {
+  const el = document.getElementById("transcript");
+  el.scrollTop = el.scrollHeight;
+  document.getElementById("scroll-bottom-btn").style.display = "none";
 });
-document.getElementById("chat-back").addEventListener("click", () => showList());
-document.getElementById("list-archive-toggle").addEventListener("click", () => showList(!app.showingArchived));
+document.getElementById("transcript").addEventListener("scroll", () => {
+  const el = document.getElementById("transcript");
+  if (!app.transcript) return;
+  const hasContent = app.transcript.messages.length > 0 || !!app.transcript.streaming;
+  document.getElementById("scroll-bottom-btn").style.display = hasContent && !isNearBottom(el) ? "flex" : "none";
+});
+
 document.getElementById("archive-btn").addEventListener("click", async () => {
   if (!app.conv) return;
   const archiveBtn = document.getElementById("archive-btn");
@@ -577,7 +992,7 @@ document.getElementById("archive-btn").addEventListener("click", async () => {
   try {
     await setArchived(app.conv, !app.convArchived);
     app.convArchived = !app.convArchived;
-    archiveBtn.textContent = app.convArchived ? "Unarchive" : "Archive";
+    updateArchiveButton();
     const active = app.transcript && (app.transcript.runStatus === "queued" || app.transcript.runStatus === "running");
     updateComposerState(!!active);
   } catch (err) {
@@ -586,35 +1001,44 @@ document.getElementById("archive-btn").addEventListener("click", async () => {
     archiveBtn.disabled = false;
   }
 });
-document.getElementById("load-more").addEventListener("click", () => loadList(false));
+document.getElementById("cancel-btn").addEventListener("click", cancelActiveRun);
+
 document.getElementById("composer").addEventListener("submit", (e) => { e.preventDefault(); sendMessage(); });
+document.getElementById("composer-input").addEventListener("input", (e) => autoGrowTextarea(e.target));
 document.getElementById("composer-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
-document.getElementById("cancel-btn").addEventListener("click", cancelActiveRun);
-document.addEventListener("visibilitychange", () => {
-  // Backgrounding just drops the connection; foreground resubscribes from the
-  // cursor (§4) — but only if the chat screen is actually the one showing.
-  // showList() clears app.conv/app.transcript, but subscribe() itself calls
-  // teardownChat() too (it doesn't clear them, by design — that would break
-  // the normal open-chat flow), so the screen check is the real guard against
-  // silently reopening a stale chat's stream from the list screen, which was
-  // also suppressing push notifications for it (see index.ts's onFinish).
-  const chatActive = document.getElementById("screen-chat").classList.contains("active");
-  if (document.visibilityState === "visible" && chatActive && app.conv && app.transcript) subscribe(app.conv, app.transcript.cursor);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.body.classList.contains("sidebar-open")) closeSidebar();
 });
 
-async function boot() {
+document.getElementById("set-save").addEventListener("click", () => {
+  store.url = document.getElementById("set-url").value.trim();
+  store.token = document.getElementById("set-token").value.trim();
+  document.body.classList.remove("settings-active");
+  boot();
+});
+document.getElementById("set-cancel").addEventListener("click", () => {
+  document.body.classList.remove("settings-active");
+});
+
+document.addEventListener("visibilitychange", () => {
+  // Backgrounding just drops the connection; foreground resubscribes from the
+  // cursor. Chat is always mounted now, so the only screen that suppresses
+  // this is the settings gate.
+  const settingsActive = document.body.classList.contains("settings-active");
+  if (document.visibilityState === "visible" && !settingsActive && app.conv && app.transcript) subscribe(app.conv, app.transcript.cursor);
+});
+
+function boot() {
   if (!store.url || !store.token) {
-    showScreen("screen-settings");
+    showSettingsScreen();
     return;
   }
-  try {
-    await showList();
-  } catch (err) {
-    alert(`Could not reach server: ${err.message}`);
-    showScreen("screen-settings");
-  }
+  document.body.classList.remove("settings-active");
+  ensureModelsLoaded();
+  newDraft();
 }
 boot();
 </script>
