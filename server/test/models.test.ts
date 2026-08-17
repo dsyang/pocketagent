@@ -43,23 +43,27 @@ afterEach(async () => {
 });
 
 // registerModelRoutes calls the *global* fetch directly (no injectable
-// fetchImpl seam, unlike openrouter.ts/loop.ts), and OpenRouter's
-// /api/v1/models is a public endpoint that doesn't require a valid key — so
-// an unstubbed test silently takes the live-fetch branch against a real
-// third party instead of the CURATED_MODELS fallback, and does so with up to
-// FETCH_TIMEOUT_MS of latency on a runner with no network access at all.
-// Stub global fetch so each branch is exercised deterministically.
+// fetchImpl seam, unlike openrouter.ts/loop.ts) whenever it does reach for
+// the live OpenRouter catalog. Stub it so any test that exercises that path
+// is deterministic and offline-safe, and so we can assert it's *not* called
+// when it shouldn't be — tracked separately from the global fetch spy, which
+// also (unavoidably) counts the test's own request to the harness itself.
 function stubOpenRouterFetch(impl: (input: unknown, init?: RequestInit) => Promise<Response>) {
   const realFetch = globalThis.fetch;
-  return vi.spyOn(globalThis, "fetch").mockImplementation(((input: any, init?: any) => {
-    if (String(input).startsWith("https://openrouter.ai/")) return impl(input, init);
+  const openRouterCalls: unknown[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(((input: any, init?: any) => {
+    if (String(input).startsWith("https://openrouter.ai/")) {
+      openRouterCalls.push(input);
+      return impl(input, init);
+    }
     return realFetch(input, init); // let the test's own request to the harness through
   }) as typeof fetch);
+  return openRouterCalls;
 }
 
 describe("GET /models", () => {
-  it("falls back to the curated list when the live OpenRouter fetch fails, and still reports the server's default model", async () => {
-    stubOpenRouterFetch(() => Promise.reject(new Error("offline")));
+  it("returns only the curated list with no query, and never touches the live OpenRouter API to do it", async () => {
+    const openRouterCalls = stubOpenRouterFetch(() => Promise.reject(new Error("should not be called")));
     const h = await buildHarness();
     harnesses.push(h);
 
@@ -67,20 +71,46 @@ describe("GET /models", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { models: Array<{ id: string }>; default: string };
     expect(body.default).toBe("test/default-model");
-    expect(body.models.map((m) => m.id)).toContain("anthropic/claude-sonnet-5"); // a CURATED_MODELS entry
+    expect(body.models.length).toBeGreaterThan(0);
+    expect(body.models.length).toBeLessThan(20); // the curated set, not the hundreds-strong live catalog
+    expect(openRouterCalls).toHaveLength(0);
   });
 
-  it("reports the server's default model on the live-fetch branch too", async () => {
+  it("searching for a curated model returns it without touching the live API", async () => {
+    const openRouterCalls = stubOpenRouterFetch(() => Promise.reject(new Error("should not be called")));
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/models?q=haiku`, authed());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { models: Array<{ id: string }>; default: string };
+    expect(body.models.map((m) => m.id)).toContain("anthropic/claude-haiku-4.5");
+    expect(openRouterCalls).toHaveLength(0);
+  });
+
+  it("searching for something not in the curated list falls back to the live catalog", async () => {
     stubOpenRouterFetch(() =>
-      Promise.resolve(new Response(JSON.stringify({ data: [{ id: "some/live-model", name: "Some Live Model" }] }), { status: 200 })),
+      Promise.resolve(new Response(JSON.stringify({ data: [{ id: "some/obscure-model", name: "Some Obscure Model" }] }), { status: 200 })),
     );
     const h = await buildHarness();
     harnesses.push(h);
 
-    const res = await fetch(`${h.base}/models`, authed());
+    const res = await fetch(`${h.base}/models?q=obscure`, authed());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { models: Array<{ id: string }>; default: string };
     expect(body.default).toBe("test/default-model");
-    expect(body.models).toEqual([{ id: "some/live-model", name: "Some Live Model" }]);
+    expect(body.models).toEqual([{ id: "some/obscure-model", name: "Some Obscure Model" }]);
+  });
+
+  it("reports an empty result, not the curated list, when a search matches nothing anywhere", async () => {
+    stubOpenRouterFetch(() => Promise.reject(new Error("offline")));
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/models?q=zzz-nonexistent-zzz`, authed());
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { models: Array<{ id: string }>; default: string };
+    expect(body.default).toBe("test/default-model");
+    expect(body.models).toEqual([]);
   });
 });

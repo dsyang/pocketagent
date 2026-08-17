@@ -501,35 +501,73 @@ function updateModelChip() {
   }
 }
 
+// pendingValue is what app.pendingModel becomes on click — null for the
+// synthesized "Default" row, the model id otherwise.
+function buildModelOption(pendingValue, label, selected) {
+  const opt = document.createElement("button");
+  opt.type = "button";
+  opt.className = "model-option";
+  if (selected) opt.classList.add("selected");
+  opt.innerHTML = `<span>${escapeHtml(label)}</span>${selected ? '<span class="check">✓</span>' : ""}`;
+  opt.addEventListener("click", () => {
+    app.pendingModel = pendingValue;
+    updateModelChip();
+    document.getElementById("model-dialog").close();
+  });
+  return opt;
+}
+
+// app.modelsList only ever holds the small curated set (GET /models with no
+// query) — the full multi-hundred-model OpenRouter catalog is never loaded
+// up front. If the curated set has nothing matching the typed filter, fall
+// back to a debounced server-side search of the live catalog instead.
+let modelSearchSeq = 0;
+let modelSearchTimer = null;
+
 function renderModelOptions(filter) {
   const container = document.getElementById("model-options");
-  container.innerHTML = "";
   const f = (filter || "").trim().toLowerCase();
+  if (modelSearchTimer) { clearTimeout(modelSearchTimer); modelSearchTimer = null; }
+  modelSearchSeq++; // invalidate any in-flight live search kicked off by an earlier keystroke
 
-  const addOption = (id, label, isDefault) => {
-    const opt = document.createElement("button");
-    opt.type = "button";
-    opt.className = "model-option";
-    const selected = isDefault ? !app.pendingModel : app.pendingModel === id;
-    if (selected) opt.classList.add("selected");
-    opt.innerHTML = `<span>${escapeHtml(label)}</span>${selected ? '<span class="check">✓</span>' : ""}`;
-    opt.addEventListener("click", () => {
-      app.pendingModel = isDefault ? null : id;
-      updateModelChip();
-      document.getElementById("model-dialog").close();
-    });
-    container.appendChild(opt);
-  };
-
+  container.innerHTML = "";
   if (!f && app.modelsDefault) {
-    addOption(app.modelsDefault, `Default (${shortModelName(app.modelsDefault)})`, true);
+    container.appendChild(buildModelOption(null, `Default (${shortModelName(app.modelsDefault)})`, !app.pendingModel));
   }
   for (const m of app.modelsList || []) {
     if (f && !(m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f))) continue;
-    addOption(m.id, m.name || m.id, false);
+    container.appendChild(buildModelOption(m.id, m.name || m.id, app.pendingModel === m.id));
   }
+
   if (!container.children.length) {
+    if (f) {
+      container.innerHTML = `<div class="empty">Searching…</div>`;
+      const seq = modelSearchSeq;
+      modelSearchTimer = setTimeout(() => runLiveModelSearch(f, seq), 300);
+    } else {
+      container.innerHTML = `<div class="empty">No matching models.</div>`;
+    }
+  }
+}
+
+async function runLiveModelSearch(query, seq) {
+  let results = [];
+  try {
+    const res = await apiJson(`/models?q=${encodeURIComponent(query)}`);
+    results = res.models || [];
+  } catch {
+    // fall through — rendered as "No matching models." below, same as a genuine empty result
+  }
+  if (seq !== modelSearchSeq) return; // the filter text has changed since this search started
+
+  const container = document.getElementById("model-options");
+  container.innerHTML = "";
+  if (results.length === 0) {
     container.innerHTML = `<div class="empty">No matching models.</div>`;
+    return;
+  }
+  for (const m of results) {
+    container.appendChild(buildModelOption(m.id, m.name || m.id, app.pendingModel === m.id));
   }
 }
 
