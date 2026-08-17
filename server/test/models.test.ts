@@ -81,10 +81,10 @@ describe("GET /models", () => {
     const h = await buildHarness();
     harnesses.push(h);
 
-    const res = await fetch(`${h.base}/models?q=haiku`, authed());
+    const res = await fetch(`${h.base}/models?q=glm`, authed());
     expect(res.status).toBe(200);
     const body = (await res.json()) as { models: Array<{ id: string }>; default: string };
-    expect(body.models.map((m) => m.id)).toContain("anthropic/claude-haiku-4.5");
+    expect(body.models.map((m) => m.id)).toContain("z-ai/glm-5.2");
     expect(openRouterCalls).toHaveLength(0);
   });
 
