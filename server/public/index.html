@@ -7,6 +7,11 @@
 <!-- Inline so the icon ships with the single-file client: /app is the only
      unauthenticated route, so a separate /favicon.svg would just 401. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2314171c'/%3E%3Cpath d='M18 20l14 12-14 12' stroke='%234f8cff' stroke-width='7.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Ccircle cx='44' cy='44' r='5.5' fill='%23e8eaed'/%3E%3C/svg%3E" />
+<!-- iOS home screen ("Add to Home Screen"). Needs a real PNG at a URL — Safari
+     takes neither SVG nor a data URI here, and with no tag at all it uses a
+     screenshot of the page as the icon. Square and opaque on purpose: iOS
+     applies its own rounded-corner mask. Regenerate with scripts/render-icon.js -->
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 <style>
   :root {
     color-scheme: light dark;
