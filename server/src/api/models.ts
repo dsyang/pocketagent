@@ -17,14 +17,19 @@ import type { AppContext } from "../context.js";
 // ids match — if this list ever drops or renames that id without updating
 // env.ts (or vice versa), that dedupe silently becomes a no-op and the
 // default renders twice.
+// Ordered cheapest first (blended prompt+completion $/M tokens, per
+// OpenRouter's pricing as of 2026-08-17) — the Default row is always pinned
+// above this list separately, so this ordering is purely among the rest.
+// Pricing drifts over time; this list isn't re-sorted automatically, so it
+// can go stale — re-check openrouter.ai/api/v1/models before reordering.
 export const CURATED_MODELS = [
-  { id: "google/gemini-3.7-flash:batch", name: "Gemini 3.7 Flash (batch)" },
-  { id: "deepseek/deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731" },
-  { id: "z-ai/glm-5.2", name: "GLM 5.2" },
-  { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" },
-  { id: "thinkingmachines/inkling-small", name: "Inkling Small" },
-  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "Nemotron 3 Ultra (free)" },
-  { id: "qwen/qwen3.7-flash", name: "Qwen3.7 Flash" },
+  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "Nemotron 3 Ultra (free)" }, // $0.000/$0.000
+  { id: "qwen/qwen3.7-flash", name: "Qwen3.7 Flash" }, // $0.030/$0.130
+  { id: "deepseek/deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731" }, // $0.140/$0.280
+  { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" }, // $0.100/$0.600
+  { id: "google/gemini-3.7-flash:batch", name: "Gemini 3.7 Flash (batch)" }, // $0.188/$0.938
+  { id: "thinkingmachines/inkling-small", name: "Inkling Small" }, // $0.450/$1.200
+  { id: "z-ai/glm-5.2", name: "GLM 5.2" }, // $0.760/$2.420
 ];
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
