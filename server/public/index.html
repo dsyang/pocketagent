@@ -137,7 +137,14 @@
   }
   .model-option:hover { background: rgba(255,255,255,0.05); border-color: transparent; }
   .model-option.selected { color: var(--accent); }
-  .model-option .check { font-size: 13px; }
+  .model-option .check { font-size: 13px; flex-shrink: 0; }
+  .model-option-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .model-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-option-id {
+    font-size: 11px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .model-option.selected .model-option-id { color: inherit; opacity: 0.75; }
 
   /* ---------- settings gate ---------- */
   #screen-settings { display: none; height: 100dvh; flex-direction: column; }
@@ -502,13 +509,21 @@ function updateModelChip() {
 }
 
 // pendingValue is what app.pendingModel becomes on click — null for the
-// synthesized "Default" row, the model id otherwise.
-function buildModelOption(pendingValue, label, selected) {
+// synthesized "Default" row, the model id otherwise. slug is always shown
+// (the raw id OpenRouter expects, e.g. "anthropic/claude-haiku-4.5") since a
+// friendly name alone doesn't tell you what you're actually selecting.
+function buildModelOption(pendingValue, name, slug, selected) {
   const opt = document.createElement("button");
   opt.type = "button";
   opt.className = "model-option";
   if (selected) opt.classList.add("selected");
-  opt.innerHTML = `<span>${escapeHtml(label)}</span>${selected ? '<span class="check">✓</span>' : ""}`;
+  opt.innerHTML = `
+    <span class="model-option-text">
+      <span class="model-option-name">${escapeHtml(name)}</span>
+      <span class="model-option-id">${escapeHtml(slug)}</span>
+    </span>
+    ${selected ? '<span class="check">✓</span>' : ""}
+  `;
   opt.addEventListener("click", () => {
     app.pendingModel = pendingValue;
     updateModelChip();
@@ -532,11 +547,11 @@ function renderModelOptions(filter) {
 
   container.innerHTML = "";
   if (!f && app.modelsDefault) {
-    container.appendChild(buildModelOption(null, `Default (${shortModelName(app.modelsDefault)})`, !app.pendingModel));
+    container.appendChild(buildModelOption(null, "Default", app.modelsDefault, !app.pendingModel));
   }
   for (const m of app.modelsList || []) {
     if (f && !(m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f))) continue;
-    container.appendChild(buildModelOption(m.id, m.name || m.id, app.pendingModel === m.id));
+    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id));
   }
 
   if (!container.children.length) {
@@ -567,7 +582,7 @@ async function runLiveModelSearch(query, seq) {
     return;
   }
   for (const m of results) {
-    container.appendChild(buildModelOption(m.id, m.name || m.id, app.pendingModel === m.id));
+    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id));
   }
 }
 
