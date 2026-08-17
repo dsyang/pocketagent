@@ -223,11 +223,17 @@ function renderMarkdown(text) {
   let html = escapeHtml(text);
   html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code}</code></pre>`);
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  // Emphasis must not run inside code. escapeHtml() has already removed every
+  // raw "<" from the input, so a <!c0> sentinel cannot collide with user text.
+  const codeSpans = [];
+  html = html.replace(/<code>[\s\S]*?<\/code>/g, (m) => `<!c${codeSpans.push(m) - 1}>`);
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
   // The agent loop marks a cancelled run's text with _[stopped]_ (loop.ts) — underscore-style, not asterisk.
-  html = html.replace(/_([^_]+)_/g, "<em>$1</em>");
+  // Word-boundary anchored (as CommonMark requires for _) so snake_case and __init__ are left alone.
+  html = html.replace(/(^|[^\w\\])_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>");
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/<!c(\d+)>/g, (_, i) => codeSpans[Number(i)]);
   return html;
 }
 function shortModelName(id) {
@@ -393,23 +399,27 @@ function updateArchiveToggleLabel() {
   document.getElementById("sidebar-title").textContent = app.showingArchived ? "Archived" : "Chats";
 }
 
+let convListSeq = 0;
 async function loadConversationList(reset) {
   const listEl = document.getElementById("conv-list");
+  const seq = ++convListSeq;
+  const archived = app.showingArchived; // snapshot: app.showingArchived can change before this request resolves
   if (reset) { listEl.innerHTML = ""; app.nextCursor = null; }
-  const params = [`limit=30`, `archived=${app.showingArchived}`];
+  const params = [`limit=30`, `archived=${archived}`];
   if (app.nextCursor) params.push(`before=${encodeURIComponent(app.nextCursor)}`);
   let result;
   try {
     result = await apiJson(`/conversations?${params.join("&")}`);
   } catch (err) {
-    if (reset) listEl.innerHTML = `<div class="empty">Could not load conversations.</div>`;
+    if (seq === convListSeq && reset) listEl.innerHTML = `<div class="empty">Could not load conversations.</div>`;
     return;
   }
+  if (seq !== convListSeq) return; // superseded by a newer load (drawer reopened / archived toggle flipped again)
   app.nextCursor = result.nextCursor;
   document.getElementById("load-more").style.display = result.nextCursor ? "block" : "none";
 
   if (reset && result.items.length === 0) {
-    listEl.innerHTML = `<div class="empty">${app.showingArchived ? "No archived conversations." : "No conversations yet."}</div>`;
+    listEl.innerHTML = `<div class="empty">${archived ? "No archived conversations." : "No conversations yet."}</div>`;
     return;
   }
   for (const c of result.items) {
@@ -421,24 +431,25 @@ async function loadConversationList(reset) {
     main.innerHTML = `
       <div class="row1"><span class="title">${escapeHtml(heading)}</span><span class="model">${escapeHtml(shortModelName(c.model))}</span></div>
       ${sub ? `<div class="preview">${escapeHtml(sub)}</div>` : ""}
-      <div class="row1"><span class="badge">${c.activeRunStatus ? "● " + c.activeRunStatus : ""}</span><span class="model">${timeAgo(c.updatedAt)}</span></div>
+      <div class="row1"><span class="badge">${c.activeRunStatus ? "● " + escapeHtml(c.activeRunStatus) : ""}</span><span class="model">${timeAgo(c.updatedAt)}</span></div>
     `;
     main.addEventListener("click", () => openChat(c.id));
     li.appendChild(main);
 
     const archiveBtn = document.createElement("button");
     archiveBtn.className = "archive-btn";
-    archiveBtn.textContent = app.showingArchived ? "Unarchive" : "Archive";
+    archiveBtn.textContent = archived ? "Unarchive" : "Archive";
     archiveBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       archiveBtn.disabled = true;
       try {
-        await setArchived(c.id, !app.showingArchived);
+        await setArchived(c.id, !archived);
         li.remove();
         if (app.conv === c.id) {
-          app.convArchived = !app.showingArchived;
+          app.convArchived = !archived;
           updateArchiveButton();
-          updateComposerState(false);
+          const runActive = !!app.transcript && (app.transcript.runStatus === "queued" || app.transcript.runStatus === "running");
+          updateComposerState(runActive);
         }
       } catch (err) {
         archiveBtn.disabled = false;
@@ -456,15 +467,23 @@ async function setArchived(conversationId, archived) {
 }
 
 // ---------- model chip + picker ----------
+let modelsPromise = null;
 async function ensureModelsLoaded() {
   if (app.modelsList) return;
-  try {
-    const res = await apiJson("/models");
-    app.modelsList = res.models || [];
-    app.modelsDefault = res.default || null;
-  } catch {
-    app.modelsList = [];
+  // Cache the in-flight promise, not the result: boot() kicks one off
+  // un-awaited, and on failure modelsList must stay null so a later chip tap
+  // retries — caching [] here is truthy and would wedge the picker on
+  // "No matching models." for the rest of the session.
+  if (!modelsPromise) {
+    modelsPromise = apiJson("/models")
+      .then((res) => {
+        app.modelsList = res.models || [];
+        app.modelsDefault = res.default || null;
+      })
+      .catch(() => {})
+      .finally(() => { modelsPromise = null; });
   }
+  await modelsPromise;
   updateModelChip();
 }
 
@@ -727,7 +746,15 @@ function subscribe(conversationId, after) {
 }
 
 // ---------- chat lifecycle ----------
+// Bumped by every gesture that changes which conversation the view owns
+// (newDraft, openChat) so a slow, now-superseded async op — a snapshot
+// fetch, a conversation-creation POST — can detect it lost the race and
+// avoid clobbering whatever the view has since moved on to.
+let viewSeq = 0;
+
 function newDraft() {
+  viewSeq++;
+  ensureConvPromise = null; // don't let a fresh draft's send reattach to a now-abandoned conversation-creation POST
   teardownChat();
   app.conv = null;
   app.convArchived = false;
@@ -743,6 +770,8 @@ function newDraft() {
 }
 
 async function openChat(id) {
+  const seq = ++viewSeq;
+  ensureConvPromise = null; // same reasoning as newDraft(): don't reattach to a stale draft's in-flight creation
   teardownChat();
   app.conv = id;
   app.convArchived = false;
@@ -758,10 +787,12 @@ async function openChat(id) {
   try {
     snapshot = await apiJson(`/conversations/${id}`);
   } catch (err) {
+    if (seq !== viewSeq) return; // a newer navigation already owns the view
     alert(`Could not open chat: ${err.message}`);
     newDraft();
     return;
   }
+  if (seq !== viewSeq) return; // superseded while the snapshot was in flight
   app.convModel = snapshot.conversation.model;
   app.convArchived = !!snapshot.conversation.archivedAt;
   updateModelChip();
@@ -788,16 +819,46 @@ async function openChat(id) {
 // Conversations are created lazily, on first send — not when "New chat" is
 // tapped — so the model stays choosable (via the chip) right up until then,
 // and tapping "New chat" never litters the list with empty rows.
+//
+// Returns the id of the conversation the caller's message should be posted
+// to. The send button isn't disabled until run_started arrives over SSE
+// (updateComposerState is only ever driven by renderTranscript), so two
+// sends from the same draft can both see app.conv === null —
+// ensureConvPromise shares one in-flight POST instead of creating two
+// conversations and stranding the first message. And if the view moves on
+// (New chat tapped, or a
+// different conversation opened) while this POST is still in flight, the
+// viewSeq check below skips installing it as app.conv/the active
+// subscription — the newer view keeps ownership — while still returning
+// the created id so the caller can send its message to the conversation it
+// actually belongs to, not to whatever the view now shows.
+let ensureConvPromise = null;
 async function ensureConversation() {
-  if (app.conv) return;
-  const body = app.pendingModel ? { model: app.pendingModel } : {};
-  const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify(body) });
-  app.conv = conv.id;
-  app.convModel = conv.model;
-  app.convArchived = false;
-  updateModelChip();
-  updateArchiveButton();
-  subscribe(app.conv, 0);
+  if (app.conv) return app.conv;
+  if (ensureConvPromise) return ensureConvPromise;
+  const seq = viewSeq;
+  const p = (async () => {
+    const body = app.pendingModel ? { model: app.pendingModel } : {};
+    const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify(body) });
+    if (seq === viewSeq) {
+      app.conv = conv.id;
+      app.convModel = conv.model;
+      app.convArchived = false;
+      updateModelChip();
+      updateArchiveButton();
+      subscribe(conv.id, 0);
+    }
+    return conv.id;
+  })();
+  ensureConvPromise = p;
+  try {
+    return await p;
+  } finally {
+    // Only clear our own slot — newDraft()/openChat() may already have
+    // reset it to null (or a newer call replaced it) while we were in
+    // flight, and clobbering that would let a later call double-create.
+    if (ensureConvPromise === p) ensureConvPromise = null;
+  }
 }
 
 async function sendMessage() {
@@ -809,8 +870,9 @@ async function sendMessage() {
   input.value = "";
   autoGrowTextarea(input);
 
+  let targetConv;
   try {
-    await ensureConversation();
+    targetConv = await ensureConversation();
   } catch (err) {
     input.value = content;
     autoGrowTextarea(input);
@@ -826,12 +888,20 @@ async function sendMessage() {
   }
   const clientMessageId = app.pendingSend.clientMessageId;
 
+  // Only render the optimistic bubble into the transcript if we're still
+  // looking at targetConv — ensureConversation() may have created it while
+  // the view moved on elsewhere, in which case the message still needs to
+  // go to the right conversation, but the local transcript it appears in
+  // (if any) belongs to whatever's open when the request actually settles.
+  const showOptimistically = app.conv === targetConv;
   const optimistic = { id: `local_${clientMessageId}`, role: "user", content, citations: null };
-  app.transcript.messages.push(optimistic);
-  renderTranscript();
+  if (showOptimistically) {
+    app.transcript.messages.push(optimistic);
+    renderTranscript();
+  }
 
   try {
-    await apiJson(`/conversations/${app.conv}/messages`, {
+    await apiJson(`/conversations/${targetConv}/messages`, {
       method: "POST",
       body: JSON.stringify({ content, clientMessageId }),
     });
@@ -840,19 +910,33 @@ async function sendMessage() {
     // Roll back the optimistic bubble and give the text back — otherwise a
     // stale token, an unreachable server, or a 409 (a run is already active)
     // renders as if the message were accepted, with no run ever queued and
-    // no way to resend without retyping it.
-    const i = app.transcript.messages.indexOf(optimistic);
-    if (i !== -1) app.transcript.messages.splice(i, 1);
-    input.value = content;
-    autoGrowTextarea(input);
-    renderTranscript();
+    // no way to resend without retyping it. Only touch the transcript/input
+    // if the view is still showing targetConv — if the user has since
+    // navigated elsewhere, there's no optimistic bubble on screen to roll
+    // back and the current composer belongs to a different conversation.
+    if (showOptimistically) {
+      const i = app.transcript.messages.indexOf(optimistic);
+      if (i !== -1) app.transcript.messages.splice(i, 1);
+      input.value = content;
+      autoGrowTextarea(input);
+      renderTranscript();
+    }
     alert(`Send failed: ${err.message}`);
   }
 }
 
 async function cancelActiveRun() {
   if (!app.transcript || !app.transcript.streaming) return;
-  await apiFetch(`/runs/${app.transcript.streaming.runId}/cancel`, { method: "POST" });
+  const btn = document.getElementById("cancel-btn");
+  btn.disabled = true;
+  try {
+    const res = await apiFetch(`/runs/${app.transcript.streaming.runId}/cancel`, { method: "POST" });
+    if (!res.ok) alert(`Could not stop the run: HTTP ${res.status}`);
+  } catch (err) {
+    alert(`Could not stop the run: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ---------- settings gate ----------
