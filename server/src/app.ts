@@ -13,6 +13,9 @@ import { registerDeviceRoutes } from "./api/devices.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Declared in index.html and served below; the auth exemption keys off it too.
+const TOUCH_ICON_ROUTE = "/apple-touch-icon.png";
+
 export interface BuildAppOptions {
   authToken: string;
   logger?: boolean;
@@ -49,6 +52,10 @@ export function buildApp(ctx: AppContext, opts: BuildAppOptions): FastifyInstanc
     // and this keeps the page same-origin with the API with no CORS), so
     // serving the HTML shell itself doesn't need the bearer preHandler.
     if (opts.serveStatic && (req.url === "/app" || req.url === "/app/")) return;
+    // Safari fetches the iOS home-screen icon as a plain unauthenticated
+    // request, so it has to be exempt too — behind the bearer preHandler it
+    // would 401 and iOS would silently fall back to a screenshot of the page.
+    if (opts.serveStatic && req.url === TOUCH_ICON_ROUTE) return;
     return createAuthPreHandler(opts.authToken)(req, reply);
   });
 
@@ -63,6 +70,16 @@ export function buildApp(ctx: AppContext, opts: BuildAppOptions): FastifyInstanc
     const indexPath = path.join(__dirname, "..", "public", "index.html");
     app.get("/app", async (_req, reply) => {
       reply.type("text/html").send(fs.readFileSync(indexPath, "utf8"));
+    });
+
+    // The tab favicon is inlined in index.html, but iOS won't take an SVG (or
+    // a data URI) for the home-screen icon — it needs a real PNG at a URL.
+    const touchIconPath = path.join(__dirname, "..", "public", "apple-touch-icon.png");
+    app.get(TOUCH_ICON_ROUTE, async (_req, reply) => {
+      reply
+        .type("image/png")
+        .header("cache-control", "public, max-age=604800")
+        .send(fs.readFileSync(touchIconPath));
     });
   }
 
