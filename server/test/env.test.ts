@@ -8,7 +8,7 @@ describe("parseEnv", () => {
     const defaults = parseEnv(BASE_ENV);
     expect(defaults.PORT).toBe(3000);
     expect(defaults.HOST).toBe("127.0.0.1");
-    expect(defaults.DEFAULT_MODEL).toBe("anthropic/claude-sonnet-5");
+    expect(defaults.DEFAULT_MODEL).toBe("deepseek/deepseek-v4-flash-0731");
     expect(defaults.MAX_PRICE_USD).toBeUndefined();
 
     const withPrice = parseEnv({ ...BASE_ENV, MAX_PRICE_USD: "0.02" });

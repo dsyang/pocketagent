@@ -137,7 +137,14 @@
   }
   .model-option:hover { background: rgba(255,255,255,0.05); border-color: transparent; }
   .model-option.selected { color: var(--accent); }
-  .model-option .check { font-size: 13px; }
+  .model-option .check { font-size: 13px; flex-shrink: 0; }
+  .model-option-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .model-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-option-id {
+    font-size: 11px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .model-option.selected .model-option-id { color: inherit; opacity: 0.75; }
 
   /* ---------- settings gate ---------- */
   #screen-settings { display: none; height: 100dvh; flex-direction: column; }
@@ -501,35 +508,91 @@ function updateModelChip() {
   }
 }
 
+// pendingValue is what app.pendingModel becomes on click — null for the
+// synthesized "Default" row, the model id otherwise. slug is always shown
+// (the raw id OpenRouter expects, e.g. "anthropic/claude-haiku-4.5") since a
+// friendly name alone doesn't tell you what you're actually selecting.
+function buildModelOption(pendingValue, name, slug, selected) {
+  const opt = document.createElement("button");
+  opt.type = "button";
+  opt.className = "model-option";
+  if (selected) opt.classList.add("selected");
+  opt.innerHTML = `
+    <span class="model-option-text">
+      <span class="model-option-name">${escapeHtml(name)}</span>
+      <span class="model-option-id">${escapeHtml(slug)}</span>
+    </span>
+    ${selected ? '<span class="check">✓</span>' : ""}
+  `;
+  opt.addEventListener("click", () => {
+    app.pendingModel = pendingValue;
+    updateModelChip();
+    document.getElementById("model-dialog").close();
+  });
+  return opt;
+}
+
+// app.modelsList only ever holds the small curated set (GET /models with no
+// query) — the full multi-hundred-model OpenRouter catalog is never loaded
+// up front. While filtering, the curated set is shown instantly as a local
+// preview, but a debounced live search always runs too (not just when the
+// curated set has zero matches) — a curated id can otherwise permanently
+// shadow a more specific live model whose id happens to be one of its
+// substrings, the same issue GET /models?q= itself guards against
+// server-side. The live search's response is the authoritative curated+live
+// union and replaces this preview once it lands.
+let modelSearchSeq = 0;
+let modelSearchTimer = null;
+
 function renderModelOptions(filter) {
   const container = document.getElementById("model-options");
-  container.innerHTML = "";
   const f = (filter || "").trim().toLowerCase();
+  if (modelSearchTimer) { clearTimeout(modelSearchTimer); modelSearchTimer = null; }
+  modelSearchSeq++; // invalidate any in-flight live search kicked off by an earlier keystroke
 
-  const addOption = (id, label, isDefault) => {
-    const opt = document.createElement("button");
-    opt.type = "button";
-    opt.className = "model-option";
-    const selected = isDefault ? !app.pendingModel : app.pendingModel === id;
-    if (selected) opt.classList.add("selected");
-    opt.innerHTML = `<span>${escapeHtml(label)}</span>${selected ? '<span class="check">✓</span>' : ""}`;
-    opt.addEventListener("click", () => {
-      app.pendingModel = isDefault ? null : id;
-      updateModelChip();
-      document.getElementById("model-dialog").close();
-    });
-    container.appendChild(opt);
-  };
-
+  container.innerHTML = "";
   if (!f && app.modelsDefault) {
-    addOption(app.modelsDefault, `Default (${shortModelName(app.modelsDefault)})`, true);
+    // app.pendingModel is null when the default is (implicitly) selected,
+    // but it's also set explicitly to app.modelsDefault's own id if that's
+    // what got clicked while filtered (the Default row itself is hidden
+    // while filtering, so that's the only row reachable for it then) —
+    // both represent the same selection and must check the box here.
+    const defaultSelected = !app.pendingModel || app.pendingModel === app.modelsDefault;
+    container.appendChild(buildModelOption(null, "Default", app.modelsDefault, defaultSelected));
   }
   for (const m of app.modelsList || []) {
     if (f && !(m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f))) continue;
-    addOption(m.id, m.name || m.id, false);
+    if (!f && m.id === app.modelsDefault) continue; // already shown as the pinned Default row above
+    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id));
   }
-  if (!container.children.length) {
+
+  if (!f) {
+    if (!container.children.length) container.innerHTML = `<div class="empty">No matching models.</div>`;
+    return;
+  }
+  if (!container.children.length) container.innerHTML = `<div class="empty">Searching…</div>`;
+  const seq = modelSearchSeq;
+  modelSearchTimer = setTimeout(() => runLiveModelSearch(f, seq), 300);
+}
+
+async function runLiveModelSearch(query, seq) {
+  let results = [];
+  try {
+    const res = await apiJson(`/models?q=${encodeURIComponent(query)}`);
+    results = res.models || [];
+  } catch {
+    // fall through — rendered as "No matching models." below, same as a genuine empty result
+  }
+  if (seq !== modelSearchSeq) return; // the filter text has changed since this search started
+
+  const container = document.getElementById("model-options");
+  container.innerHTML = "";
+  if (results.length === 0) {
     container.innerHTML = `<div class="empty">No matching models.</div>`;
+    return;
+  }
+  for (const m of results) {
+    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id));
   }
 }
 
@@ -972,6 +1035,15 @@ document.getElementById("model-chip").addEventListener("click", async () => {
 document.getElementById("model-filter").addEventListener("input", (e) => renderModelOptions(e.target.value));
 document.getElementById("model-dialog-close").addEventListener("click", () => document.getElementById("model-dialog").close());
 closeDialogOnBackdropClick(document.getElementById("model-dialog"));
+// <dialog>'s native "close" event fires however it was closed (Escape, the
+// close button, or the backdrop-click handler above, which itself just
+// calls .close()) — one listener cancels a pending debounced live search
+// left over from typing right before closing, so it can't fire (and hit
+// the network) against a dialog that's no longer open.
+document.getElementById("model-dialog").addEventListener("close", () => {
+  if (modelSearchTimer) { clearTimeout(modelSearchTimer); modelSearchTimer = null; }
+  modelSearchSeq++; // also drop a live search that's already in flight
+});
 
 document.getElementById("scroll-bottom-btn").addEventListener("click", () => {
   const el = document.getElementById("transcript");
