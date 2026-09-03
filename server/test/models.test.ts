@@ -124,6 +124,42 @@ describe("GET /models", () => {
     expect(body.models).toEqual([{ id: "some/obscure-model", name: "Some Obscure Model" }]);
   });
 
+  it("carries the curated list's own hardcoded pricing without touching the live catalog", async () => {
+    const openRouterCalls = stubOpenRouterFetch(() => Promise.reject(new Error("should not be called")));
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/models`, authed());
+    const body = (await res.json()) as { models: Array<{ id: string; promptCostPerM?: number; completionCostPerM?: number }> };
+    for (const m of body.models) {
+      expect(typeof m.promptCostPerM).toBe("number");
+      expect(typeof m.completionCostPerM).toBe("number");
+    }
+    expect(openRouterCalls).toHaveLength(0);
+  });
+
+  // OpenRouter's /models response already carries a `pricing` field per
+  // model — this is the same request fetchLiveModels() makes for a search,
+  // so surfacing it costs no extra round-trip.
+  it("converts the live catalog's $-per-token pricing strings to $-per-million for search results", async () => {
+    stubOpenRouterFetch(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [{ id: "some/obscure-model", name: "Some Obscure Model", pricing: { prompt: "0.0000003", completion: "0.0000006" } }],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/models?q=obscure`, authed());
+    const body = (await res.json()) as { models: Array<{ id: string; promptCostPerM?: number; completionCostPerM?: number }> };
+    expect(body.models).toEqual([{ id: "some/obscure-model", name: "Some Obscure Model", promptCostPerM: 0.3, completionCostPerM: 0.6 }]);
+  });
+
   it("reports an empty result, not the curated list, when a search matches nothing anywhere", async () => {
     stubOpenRouterFetch(() => Promise.reject(new Error("offline")));
     const h = await buildHarness();
