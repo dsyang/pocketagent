@@ -17,20 +17,34 @@ import type { AppContext } from "../context.js";
 // ids match — if this list ever drops or renames that id without updating
 // env.ts (or vice versa), that dedupe silently becomes a no-op and the
 // default renders twice.
-// Ordered cheapest first (blended prompt+completion $/M tokens, per
-// OpenRouter's pricing as of 2026-08-17) — the Default row is always pinned
-// above this list separately, so this ordering is purely among the rest.
-// Pricing drifts over time; this list isn't re-sorted automatically, so it
-// can go stale — re-check openrouter.ai/api/v1/models before reordering.
+//
+// promptCostPerM/completionCostPerM are $ per million tokens, hardcoded
+// here (rather than fetched) because this branch of GET /models never calls
+// out to OpenRouter — see the handler below. Ordered cheapest first (by
+// promptCostPerM + completionCostPerM, per OpenRouter's pricing as of
+// 2026-09-03) — the Default row is always pinned above this list
+// separately, so this ordering is purely among the rest. Pricing drifts
+// over time; this list isn't re-sorted automatically, so it can go stale —
+// re-check openrouter.ai/api/v1/models before reordering.
 export const CURATED_MODELS = [
-  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "Nemotron 3 Ultra (free)" }, // $0.000/$0.000
-  { id: "qwen/qwen3.7-flash", name: "Qwen3.7 Flash" }, // $0.030/$0.130
-  { id: "deepseek/deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731" }, // $0.140/$0.280
-  { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" }, // $0.100/$0.600
-  { id: "google/gemini-3.7-flash:batch", name: "Gemini 3.7 Flash (batch)" }, // $0.188/$0.938
-  { id: "thinkingmachines/inkling-small", name: "Inkling Small" }, // $0.450/$1.200
-  { id: "z-ai/glm-5.2", name: "GLM 5.2" }, // $0.760/$2.420
+  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "Nemotron 3 Ultra (free)", promptCostPerM: 0, completionCostPerM: 0 },
+  { id: "qwen/qwen3.7-flash", name: "Qwen3.7 Flash", promptCostPerM: 0.03, completionCostPerM: 0.13 },
+  { id: "meta/muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor", promptCostPerM: 0.1, completionCostPerM: 0.2 },
+  { id: "deepseek/deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731", promptCostPerM: 0.14, completionCostPerM: 0.28 },
+  { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna", promptCostPerM: 0.1, completionCostPerM: 0.6 },
+  { id: "thinkingmachines/inkling-small", name: "Inkling Small", promptCostPerM: 0.45, completionCostPerM: 1.2 },
+  { id: "google/gemini-3.8-flash:batch", name: "Gemini 3.8 Flash (batch)", promptCostPerM: 0.375, completionCostPerM: 1.875 },
+  { id: "z-ai/glm-5.2", name: "GLM 5.2", promptCostPerM: 0.76, completionCostPerM: 2.42 },
 ];
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  // $ per million tokens. Omitted (rather than 0) when unknown, so the
+  // client can tell "free" apart from "no pricing data".
+  promptCostPerM?: number;
+  completionCostPerM?: number;
+}
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const NEGATIVE_CACHE_TTL_MS = 30 * 1000; // don't retry the live fetch on every request while OpenRouter is unreachable
@@ -42,16 +56,26 @@ function matches(m: { id: string; name: string }, q: string): boolean {
   return m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q);
 }
 
+// OpenRouter reports pricing as a $-per-token string (e.g. "0.0000003"), not
+// $-per-million — convert so it lines up with CURATED_MODELS' units.
+function toCostPerM(v: unknown): number | undefined {
+  if (typeof v !== "string") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n * 1_000_000 : undefined;
+}
+
 export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
   // Scoped to this registerModelRoutes call (one per app/AppContext instance) rather than
   // module-level, so separate app instances (tests, any future multi-instance use) don't share state.
-  let cache: { at: number; models: Array<{ id: string; name: string }> } | null = null;
+  let cache: { at: number; models: ModelInfo[] } | null = null;
   let negativeCacheUntil = 0;
 
   // Only called when the caller searches (?q=) — the live catalog is
   // hundreds of entries, so it's fetched (and cached) on demand, not on
-  // every /models request.
-  async function fetchLiveModels(): Promise<Array<{ id: string; name: string }>> {
+  // every /models request. This is the same request OpenRouter's /models
+  // endpoint already answers with a `pricing` field per model, so reading
+  // it here to populate cost costs no extra round-trip.
+  async function fetchLiveModels(): Promise<ModelInfo[]> {
     if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.models;
     if (Date.now() < negativeCacheUntil) return [];
 
@@ -61,15 +85,22 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = (await res.json()) as { data?: Array<{ id?: unknown; name?: unknown }> };
+      const body = (await res.json()) as {
+        data?: Array<{ id?: unknown; name?: unknown; pricing?: { prompt?: unknown; completion?: unknown } }>;
+      };
       // Defensive: an upstream entry missing `id` would otherwise become
       // `{ id: undefined, name: undefined }`, which throws out of matches()'s
       // .toLowerCase() the first time anyone searches — and since `cache` is
       // set below before that ever happens, the broken array would stay
       // cached (and every search would keep 500ing) for the full TTL.
       const models = (body.data ?? [])
-        .filter((m): m is { id: string; name?: string } => typeof m.id === "string" && m.id.length > 0)
-        .map((m) => ({ id: m.id, name: typeof m.name === "string" && m.name ? m.name : m.id }));
+        .filter((m): m is { id: string; name?: string; pricing?: { prompt?: unknown; completion?: unknown } } => typeof m.id === "string" && m.id.length > 0)
+        .map((m) => ({
+          id: m.id,
+          name: typeof m.name === "string" && m.name ? m.name : m.id,
+          promptCostPerM: toCostPerM(m.pricing?.prompt),
+          completionCostPerM: toCostPerM(m.pricing?.completion),
+        }));
       if (models.length > 0) {
         cache = { at: Date.now(), models };
         return models;
@@ -93,8 +124,8 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
     // short-circuiting as soon as the curated set has any match — a
     // curated id can otherwise permanently shadow a more specific live
     // model whose id happens to be one of its substrings. E.g.
-    // "google/gemini-3.7-flash:batch" is curated, so every prefix of the
-    // *non*-batch "google/gemini-3.7-flash" — including its own full,
+    // "google/gemini-3.8-flash:batch" is curated, so every prefix of the
+    // *non*-batch "google/gemini-3.8-flash" — including its own full,
     // exact slug — also substring-matches the curated entry, making the
     // plain variant unreachable no matter what's typed. Capped: a broad
     // query (e.g. a single letter) shouldn't dump hundreds of live results

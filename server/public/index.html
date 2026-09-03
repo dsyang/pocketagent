@@ -153,6 +153,8 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .model-option.selected .model-option-id { color: inherit; opacity: 0.75; }
+  .model-option-cost { font-size: 11px; color: var(--muted); flex-shrink: 0; white-space: nowrap; }
+  .model-option.selected .model-option-cost { color: inherit; opacity: 0.75; }
 
   /* ---------- settings gate ---------- */
   #screen-settings { display: none; height: 100dvh; flex-direction: column; }
@@ -516,11 +518,21 @@ function updateModelChip() {
   }
 }
 
+// Renders as e.g. "$0.03/$0.13 per M" (prompt/completion $ per million
+// tokens), "Free" when both are zero, or "" when the model carries no
+// pricing data (a live-catalog entry OpenRouter didn't report pricing for).
+function formatModelCost(m) {
+  if (!m || m.promptCostPerM == null || m.completionCostPerM == null) return "";
+  if (m.promptCostPerM === 0 && m.completionCostPerM === 0) return "Free";
+  const fmt = (n) => "$" + (Math.round(n * 1000) / 1000);
+  return `${fmt(m.promptCostPerM)}/${fmt(m.completionCostPerM)} per M`;
+}
+
 // pendingValue is what app.pendingModel becomes on click — null for the
 // synthesized "Default" row, the model id otherwise. slug is always shown
 // (the raw id OpenRouter expects, e.g. "anthropic/claude-haiku-4.5") since a
 // friendly name alone doesn't tell you what you're actually selecting.
-function buildModelOption(pendingValue, name, slug, selected) {
+function buildModelOption(pendingValue, name, slug, selected, costLabel) {
   const opt = document.createElement("button");
   opt.type = "button";
   opt.className = "model-option";
@@ -530,6 +542,7 @@ function buildModelOption(pendingValue, name, slug, selected) {
       <span class="model-option-name">${escapeHtml(name)}</span>
       <span class="model-option-id">${escapeHtml(slug)}</span>
     </span>
+    ${costLabel ? `<span class="model-option-cost">${escapeHtml(costLabel)}</span>` : ""}
     ${selected ? '<span class="check">✓</span>' : ""}
   `;
   opt.addEventListener("click", () => {
@@ -566,12 +579,15 @@ function renderModelOptions(filter) {
     // while filtering, so that's the only row reachable for it then) —
     // both represent the same selection and must check the box here.
     const defaultSelected = !app.pendingModel || app.pendingModel === app.modelsDefault;
-    container.appendChild(buildModelOption(null, "Default", app.modelsDefault, defaultSelected));
+    // The Default row itself carries no pricing (it's just a string id), so
+    // borrow it from the matching curated entry, if any.
+    const defaultModel = (app.modelsList || []).find((m) => m.id === app.modelsDefault);
+    container.appendChild(buildModelOption(null, "Default", app.modelsDefault, defaultSelected, formatModelCost(defaultModel)));
   }
   for (const m of app.modelsList || []) {
     if (f && !(m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f))) continue;
     if (!f && m.id === app.modelsDefault) continue; // already shown as the pinned Default row above
-    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id));
+    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id, formatModelCost(m)));
   }
 
   if (!f) {
@@ -600,7 +616,7 @@ async function runLiveModelSearch(query, seq) {
     return;
   }
   for (const m of results) {
-    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id));
+    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id, formatModelCost(m)));
   }
 }
 
