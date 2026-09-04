@@ -75,6 +75,12 @@ From your laptop, over the tailnet (see `deploy.sh`), as your admin user:
 
 (`deploy.sh` defaults `DEPLOY_USER` to `pi` — set `DEPLOY_USER=<your-admin-username>` if it differs.)
 
+On Windows without Git Bash/WSL, use the PowerShell port instead (needs the built-in OpenSSH client — `ssh.exe` — on `PATH`):
+
+```powershell
+.\deploy\deploy.ps1 <pi-tailnet-name>
+```
+
 Or manually on the Pi, as your admin user:
 
 ```bash
