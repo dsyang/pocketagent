@@ -63,13 +63,4 @@ CREATE TABLE IF NOT EXISTS devices (
   created_at    INTEGER NOT NULL,
   last_seen_at  INTEGER
 );
-
--- Small durable key/value store for server-wide settings (currently just the
--- user-chosen default model, set via POST /models/default) that need to
--- survive a restart. Deliberately not modeled in schema.ts/drizzle — a
--- single string lookup by key doesn't need a query builder.
-CREATE TABLE IF NOT EXISTS settings (
-  key    TEXT PRIMARY KEY,
-  value  TEXT NOT NULL
-);
 `;

@@ -491,6 +491,28 @@ async function setArchived(conversationId, archived) {
 }
 
 // ---------- model chip + picker ----------
+// The default model is a client-only preference (long-press a model in the
+// picker to set it) — it lives in localStorage, never on the server, so it
+// takes precedence over GET /models' `default` (the server's own
+// DEFAULT_MODEL) whenever one has been chosen on this device.
+const LOCAL_DEFAULT_MODEL_KEY = "pocketagent.defaultModel";
+
+function getLocalDefaultModel() {
+  try {
+    return localStorage.getItem(LOCAL_DEFAULT_MODEL_KEY) || null;
+  } catch {
+    return null; // private browsing / storage disabled — fall back to the server default
+  }
+}
+
+function setLocalDefaultModel(modelId) {
+  try {
+    localStorage.setItem(LOCAL_DEFAULT_MODEL_KEY, modelId);
+  } catch {
+    // best-effort — the choice just won't survive a reload
+  }
+}
+
 let modelsPromise = null;
 async function ensureModelsLoaded() {
   if (app.modelsList) return;
@@ -502,7 +524,7 @@ async function ensureModelsLoaded() {
     modelsPromise = apiJson("/models")
       .then((res) => {
         app.modelsList = res.models || [];
-        app.modelsDefault = res.default || null;
+        app.modelsDefault = getLocalDefaultModel() || res.default || null;
       })
       .catch(() => {})
       .finally(() => { modelsPromise = null; });
@@ -603,18 +625,15 @@ function buildModelOption(pendingValue, name, slug, selected, costLabel, isDefau
   return opt;
 }
 
-// Persists the new default server-side and re-renders the currently open
-// picker in place (the dialog stays open — this isn't "pick a model for
-// this chat", it's a separate settings-like action).
-async function setModelAsDefault(modelId) {
-  try {
-    await apiJson("/models/default", { method: "POST", body: JSON.stringify({ model: modelId }) });
-    app.modelsDefault = modelId;
-    updateModelChip();
-    renderModelOptions(document.getElementById("model-filter").value);
-  } catch {
-    // best-effort — leave the previous default in place client-side
-  }
+// Persists the new default to this device's localStorage (never the
+// server — see LOCAL_DEFAULT_MODEL_KEY above) and re-renders the currently
+// open picker in place (the dialog stays open — this isn't "pick a model
+// for this chat", it's a separate settings-like action).
+function setModelAsDefault(modelId) {
+  setLocalDefaultModel(modelId);
+  app.modelsDefault = modelId;
+  updateModelChip();
+  renderModelOptions(document.getElementById("model-filter").value);
 }
 
 // app.modelsList only ever holds the small curated set (GET /models with no
@@ -992,7 +1011,12 @@ async function ensureConversation() {
   if (ensureConvPromise) return ensureConvPromise;
   const seq = viewSeq;
   const p = (async () => {
-    const body = app.pendingModel ? { model: app.pendingModel } : {};
+    // Falls back to app.modelsDefault (not just an empty body) so a default
+    // chosen via localStorage — a client-only setting the server doesn't
+    // know about — is actually what gets used, not whatever DEFAULT_MODEL
+    // the server would pick on its own.
+    const chosenModel = app.pendingModel || app.modelsDefault;
+    const body = chosenModel ? { model: chosenModel } : {};
     const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify(body) });
     if (seq === viewSeq) {
       app.conv = conv.id;

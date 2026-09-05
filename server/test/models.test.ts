@@ -206,34 +206,3 @@ describe("GET /models", () => {
     expect(CURATED_MODELS.map((m) => m.id)).toContain(fallbackDefault);
   });
 });
-
-describe("POST /models/default", () => {
-  it("updates the default returned by GET /models", async () => {
-    const h = await buildHarness();
-    harnesses.push(h);
-
-    const res = await fetch(`${h.base}/models/default`, authed({ method: "POST", body: JSON.stringify({ model: "some/new-default" }) }));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ default: "some/new-default" });
-
-    const getRes = await fetch(`${h.base}/models`, authed());
-    expect(((await getRes.json()) as { default: string }).default).toBe("some/new-default");
-  });
-
-  it("persists the new default in the settings table, surviving what a restart would re-read", async () => {
-    const h = await buildHarness();
-    harnesses.push(h);
-
-    await fetch(`${h.base}/models/default`, authed({ method: "POST", body: JSON.stringify({ model: "some/persisted-default" }) }));
-    const row = h.ctx.sqlite.prepare(`SELECT value FROM settings WHERE key = ?`).get("defaultModel") as { value: string } | undefined;
-    expect(row?.value).toBe("some/persisted-default");
-  });
-
-  it("rejects an empty model id", async () => {
-    const h = await buildHarness();
-    harnesses.push(h);
-
-    const res = await fetch(`${h.base}/models/default`, authed({ method: "POST", body: JSON.stringify({ model: "" }) }));
-    expect(res.status).toBe(400);
-  });
-});

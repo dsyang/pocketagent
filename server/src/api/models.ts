@@ -1,7 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { AppContext } from "../context.js";
-import { setSetting } from "../db/settings.js";
 
 // The model picker's default view — a short, hand-picked list so opening the
 // dialog doesn't dump OpenRouter's entire multi-hundred-model catalog on the
@@ -52,7 +51,6 @@ const NEGATIVE_CACHE_TTL_MS = 30 * 1000; // don't retry the live fetch on every 
 const FETCH_TIMEOUT_MS = 5_000;
 
 const querySchema = z.object({ q: z.string().trim().optional() });
-const setDefaultBodySchema = z.object({ model: z.string().trim().min(1) });
 
 function matches(m: { id: string; name: string }, q: string): boolean {
   return m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q);
@@ -136,17 +134,5 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
     const live = await fetchLiveModels();
     const liveMatches = live.filter((m) => matches(m, q) && !curatedMatches.some((c) => c.id === m.id)).slice(0, 50);
     return { models: [...curatedMatches, ...liveMatches], default: ctx.defaultModel };
-  });
-
-  // Long-press-to-set-default in the client's model picker. Takes effect
-  // immediately (ctx.defaultModel is read fresh on every conversation
-  // creation) and persists across restarts via the settings table.
-  app.post("/models/default", async (req, reply) => {
-    const parsed = setDefaultBodySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
-
-    ctx.defaultModel = parsed.data.model;
-    setSetting(ctx.sqlite, "defaultModel", parsed.data.model);
-    return { default: ctx.defaultModel };
   });
 }

@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { openDatabase } from "./db/client.js";
-import { getSetting } from "./db/settings.js";
 import { EventLog } from "./events/log.js";
 import { Runner } from "./jobs/runner.js";
 import { Reaper } from "./jobs/reaper.js";
@@ -18,11 +17,9 @@ async function main() {
     console.warn(`AUTH_TOKEN not set — generated a one-off token for this run: ${authToken}`);
   }
   const openRouterApiKey = env.OPENROUTER_API_KEY;
+  const defaultModel = env.DEFAULT_MODEL;
 
   const { sqlite, db } = openDatabase(env.DATABASE_PATH);
-  // A previous POST /models/default persists here, and takes precedence
-  // over the env var so the user's choice survives a restart.
-  const defaultModel = getSetting(sqlite, "defaultModel") ?? env.DEFAULT_MODEL;
   const eventLog = new EventLog(sqlite);
 
   let push: PushService | null = null;
