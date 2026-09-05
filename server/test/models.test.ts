@@ -196,12 +196,44 @@ describe("GET /models", () => {
     expect(body.models).toHaveLength(50);
   });
 
-  // Regression guard for the client's dedupe between the pinned "Default"
-  // row and a CURATED_MODELS entry that happens to share its id (see
-  // index.html's renderModelOptions): if this ever drifts apart, the picker
-  // quietly shows the default model twice with nothing else catching it.
+  // Regression guard: index.html's renderModelOptions renders the current
+  // default using its CURATED_MODELS entry (friendly name, pricing) when
+  // one exists, falling back to a bare synthesized "Default" row otherwise.
+  // If this list ever drops or renames DEFAULT_MODEL's fallback id, the
+  // out-of-the-box default silently loses its name in the picker.
   it("keeps DEFAULT_MODEL's fallback in the curated list", () => {
     const fallbackDefault = envSchema.shape.DEFAULT_MODEL.parse(undefined);
     expect(CURATED_MODELS.map((m) => m.id)).toContain(fallbackDefault);
+  });
+});
+
+describe("POST /models/default", () => {
+  it("updates the default returned by GET /models", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/models/default`, authed({ method: "POST", body: JSON.stringify({ model: "some/new-default" }) }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ default: "some/new-default" });
+
+    const getRes = await fetch(`${h.base}/models`, authed());
+    expect(((await getRes.json()) as { default: string }).default).toBe("some/new-default");
+  });
+
+  it("persists the new default in the settings table, surviving what a restart would re-read", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    await fetch(`${h.base}/models/default`, authed({ method: "POST", body: JSON.stringify({ model: "some/persisted-default" }) }));
+    const row = h.ctx.sqlite.prepare(`SELECT value FROM settings WHERE key = ?`).get("defaultModel") as { value: string } | undefined;
+    expect(row?.value).toBe("some/persisted-default");
+  });
+
+  it("rejects an empty model id", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/models/default`, authed({ method: "POST", body: JSON.stringify({ model: "" }) }));
+    expect(res.status).toBe(400);
   });
 });
