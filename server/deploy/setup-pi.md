@@ -75,6 +75,14 @@ From your laptop, over the tailnet (see `deploy.sh`), as your admin user:
 
 (`deploy.sh` defaults `DEPLOY_USER` to `pi` — set `DEPLOY_USER=<your-admin-username>` if it differs.)
 
+Or, logged into the Pi itself (console or an SSH session already on the box), skip the SSH hop:
+
+```bash
+./deploy/deploy-local.sh
+```
+
+Same steps as `deploy.sh` minus the remote shell — still runs the repo-owned steps as `pocket-agent` via the sudoers rule from §4a.
+
 Or manually on the Pi, as your admin user:
 
 ```bash
