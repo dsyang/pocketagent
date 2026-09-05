@@ -196,10 +196,11 @@ describe("GET /models", () => {
     expect(body.models).toHaveLength(50);
   });
 
-  // Regression guard for the client's dedupe between the pinned "Default"
-  // row and a CURATED_MODELS entry that happens to share its id (see
-  // index.html's renderModelOptions): if this ever drifts apart, the picker
-  // quietly shows the default model twice with nothing else catching it.
+  // Regression guard: index.html's renderModelOptions renders the current
+  // default using its CURATED_MODELS entry (friendly name, pricing) when
+  // one exists, falling back to a bare synthesized "Default" row otherwise.
+  // If this list ever drops or renames DEFAULT_MODEL's fallback id, the
+  // out-of-the-box default silently loses its name in the picker.
   it("keeps DEFAULT_MODEL's fallback in the curated list", () => {
     const fallbackDefault = envSchema.shape.DEFAULT_MODEL.parse(undefined);
     expect(CURATED_MODELS.map((m) => m.id)).toContain(fallbackDefault);

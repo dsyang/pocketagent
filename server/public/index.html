@@ -142,8 +142,10 @@
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     width: 100%; text-align: left; background: transparent; border: 1px solid transparent;
     border-radius: 8px; padding: 9px 10px; font-size: 14px;
+    -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
   }
   .model-option:hover { background: rgba(255,255,255,0.05); border-color: transparent; }
+  .model-option.pressing { background: rgba(255,255,255,0.1); }
   .model-option.selected { color: var(--accent); }
   .model-option .check { font-size: 13px; flex-shrink: 0; }
   .model-option-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
@@ -155,6 +157,11 @@
   .model-option.selected .model-option-id { color: inherit; opacity: 0.75; }
   .model-option-cost { font-size: 11px; color: var(--muted); flex-shrink: 0; white-space: nowrap; }
   .model-option.selected .model-option-cost { color: inherit; opacity: 0.75; }
+  .model-option-default-badge {
+    font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px;
+    padding: 1px 5px; flex-shrink: 0;
+  }
+  .model-option.selected .model-option-default-badge { color: inherit; opacity: 0.75; border-color: currentColor; }
 
   /* ---------- settings gate ---------- */
   #screen-settings { display: none; height: 100dvh; flex-direction: column; }
@@ -484,6 +491,28 @@ async function setArchived(conversationId, archived) {
 }
 
 // ---------- model chip + picker ----------
+// The default model is a client-only preference (long-press a model in the
+// picker to set it) — it lives in localStorage, never on the server, so it
+// takes precedence over GET /models' `default` (the server's own
+// DEFAULT_MODEL) whenever one has been chosen on this device.
+const LOCAL_DEFAULT_MODEL_KEY = "pocketagent.defaultModel";
+
+function getLocalDefaultModel() {
+  try {
+    return localStorage.getItem(LOCAL_DEFAULT_MODEL_KEY) || null;
+  } catch {
+    return null; // private browsing / storage disabled — fall back to the server default
+  }
+}
+
+function setLocalDefaultModel(modelId) {
+  try {
+    localStorage.setItem(LOCAL_DEFAULT_MODEL_KEY, modelId);
+  } catch {
+    // best-effort — the choice just won't survive a reload
+  }
+}
+
 let modelsPromise = null;
 async function ensureModelsLoaded() {
   if (app.modelsList) return;
@@ -495,7 +524,7 @@ async function ensureModelsLoaded() {
     modelsPromise = apiJson("/models")
       .then((res) => {
         app.modelsList = res.models || [];
-        app.modelsDefault = res.default || null;
+        app.modelsDefault = getLocalDefaultModel() || res.default || null;
       })
       .catch(() => {})
       .finally(() => { modelsPromise = null; });
@@ -529,10 +558,16 @@ function formatModelCost(m) {
 }
 
 // pendingValue is what app.pendingModel becomes on click — null for the
-// synthesized "Default" row, the model id otherwise. slug is always shown
-// (the raw id OpenRouter expects, e.g. "anthropic/claude-haiku-4.5") since a
-// friendly name alone doesn't tell you what you're actually selecting.
-function buildModelOption(pendingValue, name, slug, selected, costLabel) {
+// synthesized "Default" row (and for any real model that already *is* the
+// current default, so it keeps tracking a future default change), the
+// model id otherwise. slug is always shown (the raw id OpenRouter expects,
+// e.g. "anthropic/claude-haiku-4.5") since a friendly name alone doesn't
+// tell you what you're actually selecting, and doubles as the model id a
+// long-press sets as the new server-wide default.
+const LONG_PRESS_MS = 550;
+const LONG_PRESS_MOVE_CANCEL_PX = 10;
+
+function buildModelOption(pendingValue, name, slug, selected, costLabel, isDefault) {
   const opt = document.createElement("button");
   opt.type = "button";
   opt.className = "model-option";
@@ -543,14 +578,62 @@ function buildModelOption(pendingValue, name, slug, selected, costLabel) {
       <span class="model-option-id">${escapeHtml(slug)}</span>
     </span>
     ${costLabel ? `<span class="model-option-cost">${escapeHtml(costLabel)}</span>` : ""}
+    ${isDefault ? '<span class="model-option-default-badge">Default</span>' : ""}
     ${selected ? '<span class="check">✓</span>' : ""}
   `;
+
+  // Long-press (hold ~550ms without moving) sets this model as the new
+  // server-wide default, instead of just picking it for the next
+  // conversation. suppressClick guards against the click that browsers
+  // still fire once the finger/button lifts after a long-press fires.
+  let longPressTimer = null;
+  let suppressClick = false;
+  let startX = 0, startY = 0;
+  const cancelLongPress = () => {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    opt.classList.remove("pressing");
+  };
+  opt.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    suppressClick = false;
+    startX = e.clientX;
+    startY = e.clientY;
+    opt.classList.add("pressing");
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null;
+      suppressClick = true;
+      opt.classList.remove("pressing");
+      if (navigator.vibrate) navigator.vibrate(15);
+      setModelAsDefault(slug);
+    }, LONG_PRESS_MS);
+  });
+  opt.addEventListener("pointermove", (e) => {
+    if (!longPressTimer) return;
+    if (Math.abs(e.clientX - startX) > LONG_PRESS_MOVE_CANCEL_PX || Math.abs(e.clientY - startY) > LONG_PRESS_MOVE_CANCEL_PX) cancelLongPress();
+  });
+  opt.addEventListener("pointerup", cancelLongPress);
+  opt.addEventListener("pointercancel", cancelLongPress);
+  opt.addEventListener("pointerleave", cancelLongPress);
+  opt.addEventListener("contextmenu", (e) => e.preventDefault());
+
   opt.addEventListener("click", () => {
+    if (suppressClick) { suppressClick = false; return; } // already handled as a long-press
     app.pendingModel = pendingValue;
     updateModelChip();
     document.getElementById("model-dialog").close();
   });
   return opt;
+}
+
+// Persists the new default to this device's localStorage (never the
+// server — see LOCAL_DEFAULT_MODEL_KEY above) and re-renders the currently
+// open picker in place (the dialog stays open — this isn't "pick a model
+// for this chat", it's a separate settings-like action).
+function setModelAsDefault(modelId) {
+  setLocalDefaultModel(modelId);
+  app.modelsDefault = modelId;
+  updateModelChip();
+  renderModelOptions(document.getElementById("model-filter").value);
 }
 
 // app.modelsList only ever holds the small curated set (GET /models with no
@@ -572,22 +655,23 @@ function renderModelOptions(filter) {
   modelSearchSeq++; // invalidate any in-flight live search kicked off by an earlier keystroke
 
   container.innerHTML = "";
-  if (!f && app.modelsDefault) {
-    // app.pendingModel is null when the default is (implicitly) selected,
-    // but it's also set explicitly to app.modelsDefault's own id if that's
-    // what got clicked while filtered (the Default row itself is hidden
-    // while filtering, so that's the only row reachable for it then) —
-    // both represent the same selection and must check the box here.
+  // The current default is shown as itself — by name, long-press-able like
+  // any other row — rather than collapsed into a synthesized "Default" row,
+  // so a curated model that happens to be the default (e.g. DeepSeek out of
+  // the box) doesn't disappear from the list under its own name. The
+  // synthesized pinned row only exists as a fallback for when the default
+  // isn't in the curated set at all, so there's still something to show
+  // "use whatever's configured as default" while unfiltered.
+  const defaultInCuratedList = (app.modelsList || []).some((m) => m.id === app.modelsDefault);
+  if (!f && app.modelsDefault && !defaultInCuratedList) {
     const defaultSelected = !app.pendingModel || app.pendingModel === app.modelsDefault;
-    // The Default row itself carries no pricing (it's just a string id), so
-    // borrow it from the matching curated entry, if any.
-    const defaultModel = (app.modelsList || []).find((m) => m.id === app.modelsDefault);
-    container.appendChild(buildModelOption(null, "Default", app.modelsDefault, defaultSelected, formatModelCost(defaultModel)));
+    container.appendChild(buildModelOption(null, "Default", app.modelsDefault, defaultSelected, "", true));
   }
   for (const m of app.modelsList || []) {
     if (f && !(m.id.toLowerCase().includes(f) || (m.name || "").toLowerCase().includes(f))) continue;
-    if (!f && m.id === app.modelsDefault) continue; // already shown as the pinned Default row above
-    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id, formatModelCost(m)));
+    const isDefault = m.id === app.modelsDefault;
+    const selected = isDefault ? (!app.pendingModel || app.pendingModel === app.modelsDefault) : app.pendingModel === m.id;
+    container.appendChild(buildModelOption(isDefault ? null : m.id, m.name || m.id, m.id, selected, formatModelCost(m), isDefault));
   }
 
   if (!f) {
@@ -616,7 +700,9 @@ async function runLiveModelSearch(query, seq) {
     return;
   }
   for (const m of results) {
-    container.appendChild(buildModelOption(m.id, m.name || m.id, m.id, app.pendingModel === m.id, formatModelCost(m)));
+    const isDefault = m.id === app.modelsDefault;
+    const selected = isDefault ? (!app.pendingModel || app.pendingModel === app.modelsDefault) : app.pendingModel === m.id;
+    container.appendChild(buildModelOption(isDefault ? null : m.id, m.name || m.id, m.id, selected, formatModelCost(m), isDefault));
   }
 }
 
@@ -925,7 +1011,12 @@ async function ensureConversation() {
   if (ensureConvPromise) return ensureConvPromise;
   const seq = viewSeq;
   const p = (async () => {
-    const body = app.pendingModel ? { model: app.pendingModel } : {};
+    // Falls back to app.modelsDefault (not just an empty body) so a default
+    // chosen via localStorage — a client-only setting the server doesn't
+    // know about — is actually what gets used, not whatever DEFAULT_MODEL
+    // the server would pick on its own.
+    const chosenModel = app.pendingModel || app.modelsDefault;
+    const body = chosenModel ? { model: chosenModel } : {};
     const conv = await apiJson("/conversations", { method: "POST", body: JSON.stringify(body) });
     if (seq === viewSeq) {
       app.conv = conv.id;
@@ -1054,7 +1145,6 @@ document.getElementById("model-chip").addEventListener("click", async () => {
   document.getElementById("model-filter").value = "";
   renderModelOptions("");
   document.getElementById("model-dialog").showModal();
-  document.getElementById("model-filter").focus();
 });
 document.getElementById("model-filter").addEventListener("input", (e) => renderModelOptions(e.target.value));
 document.getElementById("model-dialog-close").addEventListener("click", () => document.getElementById("model-dialog").close());
