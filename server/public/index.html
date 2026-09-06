@@ -1223,6 +1223,11 @@ function boot() {
     return;
   }
   document.body.classList.remove("settings-active");
+  // Set synchronously from localStorage so newDraft()'s first chip render
+  // already shows the right label — shortModelName() only needs the id,
+  // not the fetched catalog — instead of flashing "Default" until
+  // ensureModelsLoaded()'s network round trip resolves.
+  app.modelsDefault = getLocalDefaultModel();
   ensureModelsLoaded();
   newDraft();
 }
