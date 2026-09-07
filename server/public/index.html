@@ -108,8 +108,8 @@
   .sidebar-header h1 { font-size: 16px; margin: 0; font-weight: 600; }
   .sidebar-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; }
   .sidebar-toolbar #sidebar-new { flex: 1; }
-  .sidebar-footer { padding: 10px 12px; border-top: 1px solid var(--border); }
-  .sidebar-footer button { width: 100%; }
+  .sidebar-footer { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+  .sidebar-footer button { flex: 1; }
 
   #conv-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
   #conv-list li { padding: 12px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; gap: 8px; }
@@ -163,6 +163,21 @@
   }
   .model-option.selected .model-option-default-badge { color: inherit; opacity: 0.75; border-color: currentColor; }
 
+  /* ---------- credits dialog ---------- */
+  dialog#credits-dialog {
+    border: none; border-radius: 14px; padding: 0; background: var(--panel); color: var(--text);
+    width: min(360px, 92vw);
+  }
+  dialog#credits-dialog[open] { display: flex; flex-direction: column; }
+  dialog#credits-dialog::backdrop { background: rgba(0,0,0,0.55); }
+  #credits-body { padding: 4px 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+  .credits-stat { display: flex; flex-direction: column; gap: 2px; }
+  .credits-stat .label { font-size: 12px; color: var(--muted); }
+  .credits-stat .value { font-size: 24px; font-weight: 700; }
+  .credits-stat.remaining .value { color: var(--accent); }
+  #credits-status { font-size: 13px; color: var(--muted); }
+  #credits-status.error { color: var(--danger); }
+
   /* ---------- settings gate ---------- */
   #screen-settings { display: none; height: 100dvh; flex-direction: column; }
   body.settings-active #screen-settings { display: flex; }
@@ -208,10 +223,30 @@
   <ul id="conv-list"></ul>
   <button id="load-more" type="button" style="display:none">Load more</button>
   <div class="sidebar-footer">
+    <button id="sidebar-credits" type="button">Credits</button>
     <button id="sidebar-settings" type="button">Settings</button>
   </div>
 </aside>
 <div id="scrim"></div>
+
+<dialog id="credits-dialog">
+  <div class="dialog-header">
+    <h2>OpenRouter credits</h2>
+    <button id="credits-dialog-close" class="icon-btn" type="button" aria-label="Close">&times;</button>
+  </div>
+  <div id="credits-body">
+    <div class="credits-stat remaining">
+      <span class="label">Remaining</span>
+      <span class="value" id="credits-remaining">&mdash;</span>
+    </div>
+    <div class="credits-stat">
+      <span class="label">7 day spend</span>
+      <span class="value" id="credits-weekly">&mdash;</span>
+    </div>
+    <div id="credits-status"></div>
+    <button id="credits-refresh" type="button">Refresh</button>
+  </div>
+</dialog>
 
 <dialog id="model-dialog">
   <div class="dialog-header">
@@ -706,6 +741,30 @@ async function runLiveModelSearch(query, seq) {
   }
 }
 
+// ---------- credits dialog ----------
+function formatUsd(n) {
+  return "$" + n.toFixed(2);
+}
+
+async function loadCredits() {
+  const statusEl = document.getElementById("credits-status");
+  const refreshBtn = document.getElementById("credits-refresh");
+  statusEl.textContent = "Loading…";
+  statusEl.classList.remove("error");
+  refreshBtn.disabled = true;
+  try {
+    const info = await apiJson("/credits");
+    document.getElementById("credits-remaining").textContent = formatUsd(info.remaining);
+    document.getElementById("credits-weekly").textContent = formatUsd(info.weeklySpend);
+    statusEl.textContent = "";
+  } catch (err) {
+    statusEl.textContent = `Could not load credits: ${err.message}`;
+    statusEl.classList.add("error");
+  } finally {
+    refreshBtn.disabled = false;
+  }
+}
+
 // Backdrop-click-to-close: <dialog> only gives us Esc/cancel for free, not a
 // click outside its box (the "backdrop" isn't a normal click target).
 function closeDialogOnBackdropClick(dialog) {
@@ -1138,6 +1197,13 @@ document.getElementById("sidebar-archive-toggle").addEventListener("click", () =
 });
 document.getElementById("load-more").addEventListener("click", () => loadConversationList(false));
 document.getElementById("sidebar-settings").addEventListener("click", showSettingsScreen);
+document.getElementById("sidebar-credits").addEventListener("click", () => {
+  document.getElementById("credits-dialog").showModal();
+  loadCredits();
+});
+document.getElementById("credits-dialog-close").addEventListener("click", () => document.getElementById("credits-dialog").close());
+document.getElementById("credits-refresh").addEventListener("click", loadCredits);
+closeDialogOnBackdropClick(document.getElementById("credits-dialog"));
 
 document.getElementById("model-chip").addEventListener("click", async () => {
   if (app.conv) return; // fixed once the conversation exists
