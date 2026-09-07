@@ -240,12 +240,8 @@
       <span class="value" id="credits-remaining">&mdash;</span>
     </div>
     <div class="credits-stat">
-      <span class="label">Spent</span>
-      <span class="value" id="credits-spent">&mdash;</span>
-    </div>
-    <div class="credits-stat">
-      <span class="label">Total purchased</span>
-      <span class="value" id="credits-total">&mdash;</span>
+      <span class="label">7 day spend</span>
+      <span class="value" id="credits-weekly">&mdash;</span>
     </div>
     <div id="credits-status"></div>
     <button id="credits-refresh" type="button">Refresh</button>
@@ -759,8 +755,7 @@ async function loadCredits() {
   try {
     const info = await apiJson("/credits");
     document.getElementById("credits-remaining").textContent = formatUsd(info.remaining);
-    document.getElementById("credits-spent").textContent = formatUsd(info.totalUsage);
-    document.getElementById("credits-total").textContent = formatUsd(info.totalCredits);
+    document.getElementById("credits-weekly").textContent = formatUsd(info.weeklySpend);
     statusEl.textContent = "";
   } catch (err) {
     statusEl.textContent = `Could not load credits: ${err.message}`;

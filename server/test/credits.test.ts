@@ -44,50 +44,67 @@ afterEach(async () => {
 
 // registerCreditsRoutes calls the *global* fetch directly (no injectable
 // fetchImpl seam), so stub it the same way models.test.ts does — routing
-// only requests aimed at OpenRouter through the stub, letting the test's
-// own request to the harness through untouched.
-function stubOpenRouterFetch(impl: (input: unknown, init?: RequestInit) => Promise<Response>) {
+// requests aimed at OpenRouter's /credits and /key endpoints separately,
+// letting the test's own request to the harness through untouched.
+function stubOpenRouter(opts: {
+  credits?: () => Promise<Response>;
+  key?: () => Promise<Response>;
+}) {
   const realFetch = globalThis.fetch;
-  const openRouterCalls: unknown[] = [];
+  const calls: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(((input: any, init?: any) => {
-    if (String(input).startsWith("https://openrouter.ai/")) {
-      openRouterCalls.push(input);
-      return impl(input, init);
+    const url = String(input);
+    if (url === "https://openrouter.ai/api/v1/credits" && opts.credits) {
+      calls.push("credits");
+      return opts.credits();
+    }
+    if (url === "https://openrouter.ai/api/v1/key" && opts.key) {
+      calls.push("key");
+      return opts.key();
     }
     return realFetch(input, init);
   }) as typeof fetch);
-  return openRouterCalls;
+  return calls;
+}
+
+function jsonResponse(data: unknown, status = 200) {
+  return () => Promise.resolve(new Response(JSON.stringify({ data }), { status }));
 }
 
 describe("GET /credits", () => {
-  it("returns total credits, total usage, and the derived remaining balance", async () => {
-    const openRouterCalls = stubOpenRouterFetch(() =>
-      Promise.resolve(new Response(JSON.stringify({ data: { total_credits: 50, total_usage: 32.5 } }), { status: 200 })),
-    );
+  it("returns the derived remaining balance and the current week's spend", async () => {
+    const calls = stubOpenRouter({
+      credits: jsonResponse({ total_credits: 50, total_usage: 32.5 }),
+      key: jsonResponse({ usage_weekly: 4.25 }),
+    });
     const h = await buildHarness();
     harnesses.push(h);
 
     const res = await fetch(`${h.base}/credits`, authed());
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ totalCredits: 50, totalUsage: 32.5, remaining: 17.5 });
-    expect(openRouterCalls).toHaveLength(1);
+    expect(body).toEqual({ remaining: 17.5, weeklySpend: 4.25 });
+    expect(calls.sort()).toEqual(["credits", "key"]);
   });
 
   it("caches the result and doesn't re-fetch within the TTL", async () => {
-    const openRouterCalls = stubOpenRouterFetch(() =>
-      Promise.resolve(new Response(JSON.stringify({ data: { total_credits: 10, total_usage: 1 } }), { status: 200 })),
-    );
+    const calls = stubOpenRouter({
+      credits: jsonResponse({ total_credits: 10, total_usage: 1 }),
+      key: jsonResponse({ usage_weekly: 0.5 }),
+    });
     const h = await buildHarness();
     harnesses.push(h);
 
     await fetch(`${h.base}/credits`, authed());
     await fetch(`${h.base}/credits`, authed());
-    expect(openRouterCalls).toHaveLength(1);
+    expect(calls).toHaveLength(2); // one credits + one key call, not four
   });
 
   it("returns 502 with a message when OpenRouter is unreachable", async () => {
-    stubOpenRouterFetch(() => Promise.reject(new Error("offline")));
+    stubOpenRouter({
+      credits: () => Promise.reject(new Error("offline")),
+      key: jsonResponse({ usage_weekly: 0 }),
+    });
     const h = await buildHarness();
     harnesses.push(h);
 
@@ -98,8 +115,11 @@ describe("GET /credits", () => {
     expect(body.message).toContain("offline");
   });
 
-  it("returns 502 when OpenRouter responds with a non-2xx status", async () => {
-    stubOpenRouterFetch(() => Promise.resolve(new Response("nope", { status: 401 })));
+  it("returns 502 when either endpoint responds with a non-2xx status", async () => {
+    stubOpenRouter({
+      credits: jsonResponse({ total_credits: 10, total_usage: 1 }),
+      key: () => Promise.resolve(new Response("nope", { status: 401 })),
+    });
     const h = await buildHarness();
     harnesses.push(h);
 
@@ -107,8 +127,11 @@ describe("GET /credits", () => {
     expect(res.status).toBe(502);
   });
 
-  it("returns 502 when OpenRouter's response is malformed", async () => {
-    stubOpenRouterFetch(() => Promise.resolve(new Response(JSON.stringify({ data: {} }), { status: 200 })));
+  it("returns 502 when a response is missing the field it needs", async () => {
+    stubOpenRouter({
+      credits: jsonResponse({}),
+      key: jsonResponse({ usage_weekly: 0 }),
+    });
     const h = await buildHarness();
     harnesses.push(h);
 
