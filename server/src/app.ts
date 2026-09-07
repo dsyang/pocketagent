@@ -10,6 +10,7 @@ import { registerEventRoutes } from "./api/events.js";
 import { registerRunRoutes } from "./api/runs.js";
 import { registerModelRoutes } from "./api/models.js";
 import { registerDeviceRoutes } from "./api/devices.js";
+import { registerCreditsRoutes } from "./api/credits.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -65,6 +66,7 @@ export function buildApp(ctx: AppContext, opts: BuildAppOptions): FastifyInstanc
   registerRunRoutes(app, ctx);
   registerModelRoutes(app, ctx);
   registerDeviceRoutes(app, ctx);
+  registerCreditsRoutes(app, ctx);
 
   if (opts.serveStatic) {
     const indexPath = path.join(__dirname, "..", "public", "index.html");
