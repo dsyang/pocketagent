@@ -41,6 +41,8 @@ export interface StreamChatOptions {
 export interface Usage {
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
   costUsd: number;
 }
 
@@ -64,7 +66,14 @@ interface PendingToolCall {
 // third-party JSON, so a type here (over `any`) at least makes every field
 // access show up as `unknown`/optional rather than silently `any`.
 interface StreamChunk {
-  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number; total_cost?: number };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    cost?: number;
+    total_cost?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+    completion_tokens_details?: { reasoning_tokens?: number };
+  };
   choices?: Array<{
     finish_reason?: string | null;
     delta?: {
@@ -178,6 +187,8 @@ export async function* streamChatCompletion(opts: StreamChatOptions): AsyncGener
             usage: {
               promptTokens: chunk.usage.prompt_tokens ?? 0,
               completionTokens: chunk.usage.completion_tokens ?? 0,
+              cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? 0,
+              reasoningTokens: chunk.usage.completion_tokens_details?.reasoning_tokens ?? 0,
               costUsd: chunk.usage.cost ?? chunk.usage.total_cost ?? 0,
             },
           };
