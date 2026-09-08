@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<!-- interactive-widget=resizes-content: Chrome 108+ defaults to resizes-visual,
+     which leaves the layout viewport (and 100dvh) untouched when the on-screen
+     keyboard opens, so a bottom-anchored composer ends up hidden under it.
+     This restores the old resize-the-layout-viewport behavior. iOS Safari
+     doesn't implement the directive and ignores it, so it's a no-op there. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
 <title>Pocket Agent</title>
 <!-- Inline so the icon ships with the single-file client: /app is the only
      unauthenticated route, so a separate /favicon.svg would just 401. -->
