@@ -8,6 +8,10 @@
      This restores the old resize-the-layout-viewport behavior. iOS Safari
      doesn't implement the directive and ignores it, so it's a no-op there. -->
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+<!-- Without this, Chrome on Android picks its own default tint for the
+     toolbar and the edge-to-edge gesture-nav scrim (a bluish/lavender that
+     clashes with the app). Match it to --bg so both bars blend in. -->
+<meta name="theme-color" content="#0b0d10" />
 <title>Pocket Agent</title>
 <!-- Inline so the icon ships with the single-file client: /app is the only
      unauthenticated route, so a separate /favicon.svg would just 401. -->
