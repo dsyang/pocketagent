@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import type { AppContext } from "../context.js";
 import { newId } from "../db/ids.js";
 import { conversations } from "../db/schema.js";
-import { decodeCursor, getConversationSnapshot, listConversations } from "../db/queries.js";
+import { decodeCursor, getConversationSnapshot, getConversationUsage, listConversations } from "../db/queries.js";
 
 const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(30),
@@ -87,4 +87,10 @@ export function registerConversationRoutes(app: FastifyInstance, ctx: AppContext
 
   app.post<{ Params: { id: string } }>("/conversations/:id/archive", setArchived(true));
   app.post<{ Params: { id: string } }>("/conversations/:id/unarchive", setArchived(false));
+
+  app.get<{ Params: { id: string } }>("/conversations/:id/usage", async (req, reply) => {
+    const conversation = ctx.db.select().from(conversations).where(eq(conversations.id, req.params.id)).get();
+    if (!conversation) return reply.code(404).send({ error: "not_found" });
+    return getConversationUsage(ctx.db, req.params.id);
+  });
 }

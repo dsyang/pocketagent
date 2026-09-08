@@ -38,7 +38,7 @@ export interface AssistantMessageFinalPayload {
 export interface RunFinishedPayload {
   runId: string;
   status: "completed" | "cancelled";
-  usage?: { promptTokens: number; completionTokens: number; costUsd: number } | null;
+  usage?: { promptTokens: number; completionTokens: number; cachedTokens: number; reasoningTokens: number; costUsd: number } | null;
 }
 
 export interface RunErrorPayload {

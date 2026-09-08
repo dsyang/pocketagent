@@ -91,6 +91,45 @@ export function listConversations(db: Db, opts: ListConversationsOptions): ListC
   return { items, nextCursor };
 }
 
+export interface ConversationUsageTotals {
+  inputTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+// Sums the per-run `usage` JSON blobs (written by the agent loop as each run
+// finishes) across every run in the conversation, regardless of run status —
+// a cancelled run can still have burned tokens before it was stopped. Runs
+// with no usage recorded yet (still in flight, or failed before OpenRouter
+// returned a usage chunk) are skipped rather than treated as zero-inflating
+// the count.
+export function getConversationUsage(db: Db, conversationId: string): ConversationUsageTotals {
+  const rows = db
+    .select({ usage: runs.usage })
+    .from(runs)
+    .where(and(eq(runs.conversationId, conversationId), isNotNull(runs.usage)))
+    .all();
+
+  const totals: ConversationUsageTotals = { inputTokens: 0, cachedTokens: 0, reasoningTokens: 0, outputTokens: 0, costUsd: 0 };
+  for (const row of rows) {
+    if (!row.usage) continue;
+    let parsed: { prompt_tokens?: number; cached_tokens?: number; reasoning_tokens?: number; completion_tokens?: number; cost_usd?: number };
+    try {
+      parsed = JSON.parse(row.usage);
+    } catch {
+      continue;
+    }
+    totals.inputTokens += parsed.prompt_tokens ?? 0;
+    totals.cachedTokens += parsed.cached_tokens ?? 0;
+    totals.reasoningTokens += parsed.reasoning_tokens ?? 0;
+    totals.outputTokens += parsed.completion_tokens ?? 0;
+    totals.costUsd += parsed.cost_usd ?? 0;
+  }
+  return totals;
+}
+
 export function getConversationSnapshot(db: Db, conversationId: string) {
   const conversation = db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
   if (!conversation) return null;

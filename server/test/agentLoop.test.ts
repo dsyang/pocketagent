@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { executeRun } from "../src/agent/loop.js";
 import { setupDb, createConversation, createUserMessageAndRun, newEventLog } from "./helpers.js";
-import { createScriptedFetch, simpleAnswerScript, searchAnswerScript, DONE, contentChunk, finishChunk } from "./mockOpenRouter.js";
+import { createScriptedFetch, simpleAnswerScript, searchAnswerScript, DONE, contentChunk, finishChunk, usageChunk } from "./mockOpenRouter.js";
 
 function getRunRow(sqlite: import("better-sqlite3").Database, runId: string) {
   return sqlite.prepare(`SELECT * FROM runs WHERE id = ?`).get(runId) as any;
@@ -78,6 +78,26 @@ describe("agent loop", () => {
     const usage = JSON.parse(run.usage);
     expect(usage.completion_tokens).toBe(1);
     expect(usage.cost_usd).toBeGreaterThan(0);
+  });
+
+  it("captures cached and reasoning token counts from the usage chunk's nested details", async () => {
+    const { sqlite } = setupDb();
+    const eventLog = newEventLog(sqlite);
+    const conv = createConversation(sqlite);
+    const { runId } = createUserMessageAndRun(sqlite, conv, "hi");
+
+    const fetchImpl = createScriptedFetch([
+      contentChunk("hi"),
+      finishChunk("stop"),
+      usageChunk({ prompt_tokens: 120, completion_tokens: 40, cost: 0.001, cached_tokens: 30, reasoning_tokens: 12 }),
+      DONE,
+    ]);
+    await executeRun({ sqlite, eventLog, openRouterApiKey: "test", fetchImpl, deltaFlushIntervalMs: 5 }, runId);
+
+    const run = getRunRow(sqlite, runId);
+    const usage = JSON.parse(run.usage);
+    expect(usage.cached_tokens).toBe(30);
+    expect(usage.reasoning_tokens).toBe(12);
   });
 
   it("handles a mid-stream disconnect as a failed run with run_error, not a crash", async () => {

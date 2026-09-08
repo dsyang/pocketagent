@@ -34,8 +34,21 @@ export function finishChunk(reason = "stop"): string {
   return sseChunk({ choices: [{ delta: {}, finish_reason: reason }] });
 }
 
-export function usageChunk(usage: { prompt_tokens: number; completion_tokens: number; cost?: number }): string {
-  return sseChunk({ usage });
+export function usageChunk(usage: {
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost?: number;
+  cached_tokens?: number;
+  reasoning_tokens?: number;
+}): string {
+  const { cached_tokens, reasoning_tokens, ...rest } = usage;
+  return sseChunk({
+    usage: {
+      ...rest,
+      ...(cached_tokens !== undefined ? { prompt_tokens_details: { cached_tokens } } : {}),
+      ...(reasoning_tokens !== undefined ? { completion_tokens_details: { reasoning_tokens } } : {}),
+    },
+  });
 }
 
 export const DONE = "data: [DONE]\n\n";

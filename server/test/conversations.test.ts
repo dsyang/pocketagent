@@ -3,6 +3,8 @@ import { buildApp } from "../src/app.js";
 import { openDatabase } from "../src/db/client.js";
 import { EventLog } from "../src/events/log.js";
 import { Runner } from "../src/jobs/runner.js";
+import { runs } from "../src/db/schema.js";
+import { newId } from "../src/db/ids.js";
 import type { AppContext } from "../src/context.js";
 import type { FastifyInstance } from "fastify";
 
@@ -169,6 +171,74 @@ describe("archiving conversations", () => {
       authed({ method: "POST", body: JSON.stringify({ content: "a new message", clientMessageId: "retry-2" }) }),
     );
     expect(newSend.status).toBe(409);
+  });
+});
+
+describe("GET /conversations/:id/usage", () => {
+  async function createConversation(h: Harness): Promise<string> {
+    const res = await fetch(`${h.base}/conversations`, authed({ method: "POST", body: JSON.stringify({ model: "test/model" }) }));
+    const conv = (await res.json()) as { id: string };
+    return conv.id;
+  }
+
+  function insertRun(h: Harness, conversationId: string, usage: Record<string, number> | null, status = "completed") {
+    h.ctx.db
+      .insert(runs)
+      .values({
+        id: newId("run"),
+        conversationId,
+        status: status as "completed" | "failed" | "cancelled",
+        model: "test/model",
+        usage: usage ? JSON.stringify(usage) : null,
+        createdAt: Date.now(),
+      })
+      .run();
+  }
+
+  it("404s for a conversation that doesn't exist", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/conversations/conv_missing/usage`, authed());
+    expect(res.status).toBe(404);
+  });
+
+  it("returns all-zero totals for a conversation with no runs yet", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const id = await createConversation(h);
+
+    const res = await fetch(`${h.base}/conversations/${id}/usage`, authed());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ inputTokens: 0, cachedTokens: 0, reasoningTokens: 0, outputTokens: 0, costUsd: 0 });
+  });
+
+  it("sums input/cached/reasoning/output tokens and cost across every run, skipping runs with no usage recorded", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const id = await createConversation(h);
+
+    insertRun(h, id, { prompt_tokens: 100, cached_tokens: 20, reasoning_tokens: 5, completion_tokens: 50, cost_usd: 0.001 });
+    insertRun(h, id, { prompt_tokens: 200, cached_tokens: 0, reasoning_tokens: 15, completion_tokens: 80, cost_usd: 0.002 });
+    insertRun(h, id, null, "cancelled"); // no usage chunk ever arrived — must not count as zero-inflating anything but must not error either
+
+    const res = await fetch(`${h.base}/conversations/${id}/usage`, authed());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ inputTokens: 300, cachedTokens: 20, reasoningTokens: 20, outputTokens: 130, costUsd: 0.003 });
+  });
+
+  it("does not include another conversation's usage", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+    const idA = await createConversation(h);
+    const idB = await createConversation(h);
+
+    insertRun(h, idA, { prompt_tokens: 100, cached_tokens: 0, reasoning_tokens: 0, completion_tokens: 10, cost_usd: 0.001 });
+    insertRun(h, idB, { prompt_tokens: 999, cached_tokens: 0, reasoning_tokens: 0, completion_tokens: 999, cost_usd: 9 });
+
+    const res = await fetch(`${h.base}/conversations/${idA}/usage`, authed());
+    const body = (await res.json()) as { inputTokens: number };
+    expect(body.inputTokens).toBe(100);
   });
 });
 

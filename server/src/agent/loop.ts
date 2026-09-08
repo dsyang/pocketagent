@@ -208,7 +208,15 @@ export async function executeRun(deps: LoopDeps, runId: string): Promise<void> {
     status = "completed";
   }
 
-  const usageJson = usage ? JSON.stringify({ prompt_tokens: usage.promptTokens, completion_tokens: usage.completionTokens, cost_usd: usage.costUsd }) : null;
+  const usageJson = usage
+    ? JSON.stringify({
+        prompt_tokens: usage.promptTokens,
+        completion_tokens: usage.completionTokens,
+        cached_tokens: usage.cachedTokens,
+        reasoning_tokens: usage.reasoningTokens,
+        cost_usd: usage.costUsd,
+      })
+    : null;
   const citationsJson = citations.length ? JSON.stringify(citations) : null;
 
   const finalizeEvents: NewEvent[] = [];
@@ -226,7 +234,19 @@ export async function executeRun(deps: LoopDeps, runId: string): Promise<void> {
   } else {
     finalizeEvents.push({
       type: "run_finished",
-      payload: { runId, status, usage: usage ? { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, costUsd: usage.costUsd } : null },
+      payload: {
+        runId,
+        status,
+        usage: usage
+          ? {
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              cachedTokens: usage.cachedTokens,
+              reasoningTokens: usage.reasoningTokens,
+              costUsd: usage.costUsd,
+            }
+          : null,
+      },
     });
   }
 
