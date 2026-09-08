@@ -115,11 +115,12 @@
   #conv-list li { padding: 12px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; gap: 8px; }
   #conv-list li:hover { background: rgba(255,255,255,0.03); }
   #conv-list .row-main { flex: 1; min-width: 0; }
-  #conv-list .row1 { display: flex; justify-content: space-between; gap: 8px; }
-  #conv-list .title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #conv-list .model { color: var(--muted); font-size: 11px; flex-shrink: 0; }
-  #conv-list .preview { color: var(--muted); font-size: 12px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #conv-list .badge { font-size: 11px; color: var(--accent); }
+  #conv-list .conv-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #conv-list .conv-meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; color: var(--muted); font-size: 11px; }
+  #conv-list .conv-meta .model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #conv-list .conv-meta .dot { flex-shrink: 0; }
+  #conv-list .conv-meta .time { flex-shrink: 0; }
+  #conv-list .conv-meta .badge { color: var(--accent); flex-shrink: 0; }
   #conv-list .archive-btn { flex-shrink: 0; padding: 6px 10px; font-size: 12px; }
   #load-more { margin: 10px 12px; }
   #sidebar-archive-toggle.active { border-color: var(--accent); color: var(--accent); }
@@ -486,11 +487,14 @@ async function loadConversationList(reset) {
     const main = document.createElement("div");
     main.className = "row-main";
     const heading = c.title || c.lastMessagePreview || "(new conversation)";
-    const sub = c.title && c.lastMessagePreview ? c.lastMessagePreview : "";
     main.innerHTML = `
-      <div class="row1"><span class="title">${escapeHtml(heading)}</span><span class="model">${escapeHtml(shortModelName(c.model))}</span></div>
-      ${sub ? `<div class="preview">${escapeHtml(sub)}</div>` : ""}
-      <div class="row1"><span class="badge">${c.activeRunStatus ? "● " + escapeHtml(c.activeRunStatus) : ""}</span><span class="model">${timeAgo(c.updatedAt)}</span></div>
+      <div class="conv-title">${escapeHtml(heading)}</div>
+      <div class="conv-meta">
+        ${c.activeRunStatus ? `<span class="badge">● ${escapeHtml(c.activeRunStatus)}</span>` : ""}
+        <span class="model">${escapeHtml(shortModelName(c.model))}</span>
+        <span class="dot">·</span>
+        <span class="time">${timeAgo(c.updatedAt)}</span>
+      </div>
     `;
     main.addEventListener("click", () => openChat(c.id));
     li.appendChild(main);
