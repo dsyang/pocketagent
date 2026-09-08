@@ -121,8 +121,7 @@
   #conv-list .conv-meta .dot { flex-shrink: 0; }
   #conv-list .conv-meta .time { flex-shrink: 0; }
   #conv-list .conv-meta .badge { color: var(--accent); flex-shrink: 0; }
-  #conv-list .archive-btn { flex-shrink: 0; padding: 6px 10px; font-size: 12px; }
-  #conv-list .row-main.pressing { background: rgba(255,255,255,0.06); }
+  #conv-list .row-action-btn { flex-shrink: 0; padding: 6px 10px; font-size: 12px; }
   #load-more { margin: 10px 12px; }
   #sidebar-archive-toggle.active { border-color: var(--accent); color: var(--accent); }
 
@@ -529,66 +528,20 @@ async function loadConversationList(reset) {
         <span class="time">${timeAgo(c.updatedAt)}</span>
       </div>
     `;
-    // Long-press (hold ~550ms without moving) opens the usage dialog for
-    // this conversation instead of the normal tap-to-open. Mirrors the
-    // long-press-to-set-default pattern in buildModelOption() below.
-    let longPressTimer = null;
-    let suppressClick = false;
-    let startX = 0, startY = 0;
-    const cancelLongPress = () => {
-      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-      main.classList.remove("pressing");
-    };
-    main.addEventListener("pointerdown", (e) => {
-      if (e.pointerType === "mouse" && e.button !== 0) return;
-      suppressClick = false;
-      startX = e.clientX;
-      startY = e.clientY;
-      main.classList.add("pressing");
-      longPressTimer = setTimeout(() => {
-        longPressTimer = null;
-        suppressClick = true;
-        main.classList.remove("pressing");
-        if (navigator.vibrate) navigator.vibrate(15);
-        loadUsage(c.id, heading);
-      }, LONG_PRESS_MS);
-    });
-    main.addEventListener("pointermove", (e) => {
-      if (!longPressTimer) return;
-      if (Math.abs(e.clientX - startX) > LONG_PRESS_MOVE_CANCEL_PX || Math.abs(e.clientY - startY) > LONG_PRESS_MOVE_CANCEL_PX) cancelLongPress();
-    });
-    main.addEventListener("pointerup", cancelLongPress);
-    main.addEventListener("pointercancel", cancelLongPress);
-    main.addEventListener("pointerleave", cancelLongPress);
-    main.addEventListener("contextmenu", (e) => e.preventDefault());
-
-    main.addEventListener("click", () => {
-      if (suppressClick) { suppressClick = false; return; } // already handled as a long-press
-      openChat(c.id);
-    });
+    main.addEventListener("click", () => openChat(c.id));
     li.appendChild(main);
 
-    const archiveBtn = document.createElement("button");
-    archiveBtn.className = "archive-btn";
-    archiveBtn.textContent = archived ? "Unarchive" : "Archive";
-    archiveBtn.addEventListener("click", async (e) => {
+    // Archiving from the list moved into the chat header (see #archive-btn)
+    // — this row action is usage stats instead, since a tap is far more
+    // reliable than long-press on mobile.
+    const usageBtn = document.createElement("button");
+    usageBtn.className = "row-action-btn";
+    usageBtn.textContent = "Usage";
+    usageBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      archiveBtn.disabled = true;
-      try {
-        await setArchived(c.id, !archived);
-        li.remove();
-        if (app.conv === c.id) {
-          app.convArchived = !archived;
-          updateArchiveButton();
-          const runActive = !!app.transcript && (app.transcript.runStatus === "queued" || app.transcript.runStatus === "running");
-          updateComposerState(runActive);
-        }
-      } catch (err) {
-        archiveBtn.disabled = false;
-        alert(`Failed: ${err.message}`);
-      }
+      loadUsage(c.id, heading);
     });
-    li.appendChild(archiveBtn);
+    li.appendChild(usageBtn);
 
     listEl.appendChild(li);
   }
