@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<!-- interactive-widget=resizes-content: Chrome 108+ defaults to resizes-visual,
-     which leaves the layout viewport (and 100dvh) untouched when the on-screen
-     keyboard opens, so a bottom-anchored composer ends up hidden under it.
-     This restores the old resize-the-layout-viewport behavior. iOS Safari
-     doesn't implement the directive and ignores it, so it's a no-op there. -->
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+<!-- No interactive-widget override: resizes-content (tried previously) hits a
+     still-open Android bug where the relocated gesture-nav bar overlaps the
+     last slice of resized content (issuetracker.google.com/issues/266052731).
+     #app-shell's height is instead driven from the VisualViewport API in the
+     script below, which doesn't share that bug. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
 <!-- Without this, Chrome on Android picks its own default tint for the
      toolbar and the edge-to-edge gesture-nav scrim (a bluish/lavender that
      clashes with the app). Match it to --bg so both bars blend in. -->
@@ -52,7 +52,7 @@
   .empty { padding: 32px; text-align: center; color: var(--muted); }
 
   /* ---------- chat shell (always mounted — the whole point of this redesign) ---------- */
-  #app-shell { display: flex; flex-direction: column; height: 100dvh; }
+  #app-shell { display: flex; flex-direction: column; height: var(--app-height, 100dvh); }
   #chat-header {
     display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px;
     padding: 10px 12px; border-bottom: 1px solid var(--border);
@@ -315,6 +315,24 @@
 
 <script>
 "use strict";
+
+// ---------- keyboard-safe viewport height ----------
+// #app-shell sizes itself from --app-height (measured here) rather than
+// trusting 100dvh alone: the VisualViewport API's resize/scroll events
+// report the space actually free of the on-screen keyboard, and unlike the
+// interactive-widget=resizes-content meta directive, aren't implicated in
+// the Android bug where the gesture-nav bar overlaps the last slice of
+// resized content (issuetracker.google.com/issues/266052731).
+function syncAppHeight() {
+  const vv = window.visualViewport;
+  const h = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty("--app-height", `${h}px`);
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener("resize", syncAppHeight);
+  visualViewport.addEventListener("scroll", syncAppHeight);
+}
+syncAppHeight();
 
 // ---------- tiny markdown renderer (bold/italic/code/links, nothing else) ----------
 function escapeHtml(s) {
