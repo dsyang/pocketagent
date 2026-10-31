@@ -119,7 +119,7 @@ HOST=127.0.0.1
 PORT=3000
 AUTH_TOKEN=<generate: openssl rand -hex 32>
 OPENROUTER_API_KEY=<your OpenRouter key>
-DEFAULT_MODEL=deepseek/deepseek-v4.1-flash-1017
+DEFAULT_MODEL=z-ai/glm-5.3-flash
 # Optional: OpenRouter's provider.max_price routing ceiling, in USD per
 # million completion tokens — requests route only to providers at or under
 # this price. Not a per-run spend cap. Leave unset for no ceiling.
@@ -154,7 +154,7 @@ From a laptop on the tailnet:
 ```bash
 export POCKET_AGENT_URL=https://<pi-name>.<tailnet>.ts.net
 export POCKET_AGENT_TOKEN=<the AUTH_TOKEN above>
-pnpm --dir server chat new deepseek/deepseek-v4.1-flash-1017 "smoke test"
+pnpm --dir server chat new z-ai/glm-5.3-flash "smoke test"
 pnpm --dir server chat send <conversationId> "what's the weather like today"
 ```
 

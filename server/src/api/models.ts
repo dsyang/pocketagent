@@ -11,7 +11,7 @@ import type { AppContext } from "../context.js";
 // The current default model (ctx.defaultModel) doesn't strictly need an
 // entry here — the client always pins it at the top of the list separately
 // — but env.ts's DEFAULT_MODEL fallback is deliberately kept in sync with
-// the "deepseek/deepseek-v4.1-flash-1017" entry below (see models.test.ts's
+// the "z-ai/glm-5.3-flash" entry below (see models.test.ts's
 // "keeps DEFAULT_MODEL's fallback in the curated list" test), because the
 // client dedupes a curated row against the pinned Default row when their
 // ids match — if this list ever drops or renames that id without updating
@@ -28,7 +28,7 @@ import type { AppContext } from "../context.js";
 // re-check openrouter.ai/api/v1/models before reordering.
 export const CURATED_MODELS = [
   { id: "nvidia/nemotron-3.5-super-vl:free", name: "Nemotron 3.5 Super VL (free)", promptCostPerM: 0, completionCostPerM: 0 },
-  { id: "qwen/qwen3.7-flash", name: "Qwen3.7 Flash", promptCostPerM: 0.03, completionCostPerM: 0.13 },
+  { id: "z-ai/glm-5.3-flash", name: "GLM 5.3 Flash", promptCostPerM: 0.02, completionCostPerM: 0.124 },
   { id: "openai/gpt-6-luna", name: "GPT-6 Luna", promptCostPerM: 0.1, completionCostPerM: 0.5 },
   { id: "deepseek/deepseek-v4.1-flash-1017", name: "DeepSeek V4.1 Flash 1017", promptCostPerM: 0.15, completionCostPerM: 0.6 },
   { id: "reflection/beam-1.0-501b-a23b", name: "Reflection Beam 1.0", promptCostPerM: 0.25, completionCostPerM: 1 },

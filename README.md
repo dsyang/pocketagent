@@ -35,7 +35,7 @@ In another shell:
 ```bash
 export POCKET_AGENT_URL=http://127.0.0.1:3000
 export POCKET_AGENT_TOKEN=$AUTH_TOKEN
-pnpm --dir server chat new deepseek/deepseek-v4.1-flash-1017 "first chat"
+pnpm --dir server chat new z-ai/glm-5.3-flash "first chat"
 pnpm --dir server chat send <conversationId> "hello!"
 ```
 
