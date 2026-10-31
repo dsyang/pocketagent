@@ -29,10 +29,12 @@ import type { AppContext } from "../context.js";
 export const CURATED_MODELS = [
   { id: "nvidia/nemotron-3.5-super-vl:free", name: "Nemotron 3.5 Super VL (free)", promptCostPerM: 0, completionCostPerM: 0 },
   { id: "qwen/qwen3.7-flash", name: "Qwen3.7 Flash", promptCostPerM: 0.03, completionCostPerM: 0.13 },
-  { id: "inception/mercury-3", name: "Mercury 3", promptCostPerM: 0.1, completionCostPerM: 0.35 },
   { id: "openai/gpt-6-luna", name: "GPT-6 Luna", promptCostPerM: 0.1, completionCostPerM: 0.5 },
-  { id: "anthropic/claude-haiku-5.5", name: "Claude Haiku 5.5", promptCostPerM: 0.1, completionCostPerM: 0.5 },
   { id: "deepseek/deepseek-v4.1-flash-1017", name: "DeepSeek V4.1 Flash 1017", promptCostPerM: 0.15, completionCostPerM: 0.6 },
+  { id: "reflection/beam-1.0-501b-a23b", name: "Reflection Beam 1.0", promptCostPerM: 0.25, completionCostPerM: 1 },
+  { id: "mistralai/mistral-large-4-0", name: "Mistral Large 4", promptCostPerM: 0.7, completionCostPerM: 2.1 },
+  { id: "google/gemini-3.8-flash", name: "Gemini 3.8 Flash", promptCostPerM: 0.825, completionCostPerM: 4.125 },
+  { id: "x-ai/grok-4.7", name: "Grok 4.7", promptCostPerM: 2, completionCostPerM: 6 },
 ];
 
 export interface ModelInfo {
