@@ -99,7 +99,7 @@ async function main() {
   process.on("SIGINT", () => void shutdown("SIGINT"));
 
   await app.listen({ port: env.PORT, host: env.HOST });
-  console.log(`pocket-agent listening on http://${env.HOST}:${env.PORT} (web UI at /app)`);
+  console.log(`pocket-agent listening on http://${env.HOST}:${env.PORT} (web UI at /)`);
 }
 
 main().catch((err) => {

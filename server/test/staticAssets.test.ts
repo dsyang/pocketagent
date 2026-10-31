@@ -58,9 +58,20 @@ describe("static client assets", () => {
     const h = await buildHarness();
     harnesses.push(h);
 
-    const html = await (await fetch(`${h.base}/app`)).text();
+    const html = await (await fetch(`${h.base}/`)).text();
     expect(html).toContain('rel="icon"');
     expect(html).toContain('rel="apple-touch-icon" href="/apple-touch-icon.png"');
+  });
+
+  it("serves the page at / without a token, and not at /app or /chat", async () => {
+    const h = await buildHarness();
+    harnesses.push(h);
+
+    const res = await fetch(`${h.base}/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect((await fetch(`${h.base}/app`)).status).toBe(401);
+    expect((await fetch(`${h.base}/chat`)).status).toBe(401);
   });
 
   it("still requires a token for API routes", async () => {

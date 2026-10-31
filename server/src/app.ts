@@ -16,6 +16,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Declared in index.html and served below; the auth exemption keys off it too.
 const TOUCH_ICON_ROUTE = "/apple-touch-icon.png";
+// The web client shell is served from the root.
+const WEB_ROUTE = "/";
 
 export interface BuildAppOptions {
   authToken: string;
@@ -52,7 +54,7 @@ export function buildApp(ctx: AppContext, opts: BuildAppOptions): FastifyInstanc
     // localStorage (§11 — EventSource can't send an Authorization header,
     // and this keeps the page same-origin with the API with no CORS), so
     // serving the HTML shell itself doesn't need the bearer preHandler.
-    if (opts.serveStatic && (req.url === "/app" || req.url === "/app/")) return;
+    if (opts.serveStatic && req.url === WEB_ROUTE) return;
     // Safari fetches the iOS home-screen icon as a plain unauthenticated
     // request, so it has to be exempt too — behind the bearer preHandler it
     // would 401 and iOS would silently fall back to a screenshot of the page.
@@ -70,7 +72,7 @@ export function buildApp(ctx: AppContext, opts: BuildAppOptions): FastifyInstanc
 
   if (opts.serveStatic) {
     const indexPath = path.join(__dirname, "..", "public", "index.html");
-    app.get("/app", async (_req, reply) => {
+    app.get(WEB_ROUTE, async (_req, reply) => {
       reply.type("text/html").send(fs.readFileSync(indexPath, "utf8"));
     });
 

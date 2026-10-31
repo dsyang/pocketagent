@@ -12,7 +12,7 @@ This repo currently implements **Phases 1, 2, and 2.5** of the plan: the durable
 server/
 ├── src/            # Fastify API + agent loop + event log + jobs, over SQLite (WAL)
 ├── cli/chat.ts      # terminal chat client — send, tail SSE, list conversations
-├── public/index.html # the entire web client: no build step, served at /app
+├── public/index.html # the entire web client: no build step, served at /
 ├── deploy/          # systemd unit, Pi setup doc, deploy script
 └── test/            # vitest suite incl. the resume/restart/pruning/pagination contract tests
 ```
@@ -27,7 +27,7 @@ pnpm run typecheck
 
 export OPENROUTER_API_KEY=sk-or-...
 export AUTH_TOKEN=$(openssl rand -hex 32)
-pnpm run dev          # http://127.0.0.1:3000, web UI at /app
+pnpm run dev          # http://127.0.0.1:3000, web UI at /
 ```
 
 In another shell:
@@ -35,7 +35,7 @@ In another shell:
 ```bash
 export POCKET_AGENT_URL=http://127.0.0.1:3000
 export POCKET_AGENT_TOKEN=$AUTH_TOKEN
-pnpm --dir server chat new anthropic/claude-sonnet-5 "first chat"
+pnpm --dir server chat new z-ai/glm-5.3-flash "first chat"
 pnpm --dir server chat send <conversationId> "hello!"
 ```
 
