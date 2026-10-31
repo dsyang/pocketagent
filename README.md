@@ -12,7 +12,7 @@ This repo currently implements **Phases 1, 2, and 2.5** of the plan: the durable
 server/
 ├── src/            # Fastify API + agent loop + event log + jobs, over SQLite (WAL)
 ├── cli/chat.ts      # terminal chat client — send, tail SSE, list conversations
-├── public/index.html # the entire web client: no build step, served at / (and /chat)
+├── public/index.html # the entire web client: no build step, served at /
 ├── deploy/          # systemd unit, Pi setup doc, deploy script
 └── test/            # vitest suite incl. the resume/restart/pruning/pagination contract tests
 ```
