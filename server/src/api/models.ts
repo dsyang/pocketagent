@@ -11,7 +11,7 @@ import type { AppContext } from "../context.js";
 // The current default model (ctx.defaultModel) doesn't strictly need an
 // entry here — the client always pins it at the top of the list separately
 // — but env.ts's DEFAULT_MODEL fallback is deliberately kept in sync with
-// the "deepseek/deepseek-v4-flash-0731" entry below (see models.test.ts's
+// the "deepseek/deepseek-v4.1-flash-1017" entry below (see models.test.ts's
 // "keeps DEFAULT_MODEL's fallback in the curated list" test), because the
 // client dedupes a curated row against the pinned Default row when their
 // ids match — if this list ever drops or renames that id without updating
@@ -22,19 +22,17 @@ import type { AppContext } from "../context.js";
 // here (rather than fetched) because this branch of GET /models never calls
 // out to OpenRouter — see the handler below. Ordered cheapest first (by
 // promptCostPerM + completionCostPerM, per OpenRouter's pricing as of
-// 2026-09-03) — the Default row is always pinned above this list
+// 2026-10-31) — the Default row is always pinned above this list
 // separately, so this ordering is purely among the rest. Pricing drifts
 // over time; this list isn't re-sorted automatically, so it can go stale —
 // re-check openrouter.ai/api/v1/models before reordering.
 export const CURATED_MODELS = [
-  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", name: "Nemotron 3 Ultra (free)", promptCostPerM: 0, completionCostPerM: 0 },
+  { id: "nvidia/nemotron-3.5-super-vl:free", name: "Nemotron 3.5 Super VL (free)", promptCostPerM: 0, completionCostPerM: 0 },
   { id: "qwen/qwen3.7-flash", name: "Qwen3.7 Flash", promptCostPerM: 0.03, completionCostPerM: 0.13 },
-  { id: "meta/muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor", promptCostPerM: 0.1, completionCostPerM: 0.2 },
-  { id: "deepseek/deepseek-v4-flash-0731", name: "DeepSeek V4 Flash 0731", promptCostPerM: 0.14, completionCostPerM: 0.28 },
-  { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna", promptCostPerM: 0.1, completionCostPerM: 0.6 },
-  { id: "thinkingmachines/inkling-small", name: "Inkling Small", promptCostPerM: 0.45, completionCostPerM: 1.2 },
-  { id: "google/gemini-3.8-flash:batch", name: "Gemini 3.8 Flash (batch)", promptCostPerM: 0.375, completionCostPerM: 1.875 },
-  { id: "z-ai/glm-5.2", name: "GLM 5.2", promptCostPerM: 0.76, completionCostPerM: 2.42 },
+  { id: "inception/mercury-3", name: "Mercury 3", promptCostPerM: 0.1, completionCostPerM: 0.35 },
+  { id: "openai/gpt-6-luna", name: "GPT-6 Luna", promptCostPerM: 0.1, completionCostPerM: 0.5 },
+  { id: "anthropic/claude-haiku-5.5", name: "Claude Haiku 5.5", promptCostPerM: 0.1, completionCostPerM: 0.5 },
+  { id: "deepseek/deepseek-v4.1-flash-1017", name: "DeepSeek V4.1 Flash 1017", promptCostPerM: 0.15, completionCostPerM: 0.6 },
 ];
 
 export interface ModelInfo {
@@ -124,10 +122,10 @@ export function registerModelRoutes(app: FastifyInstance, ctx: AppContext) {
     // short-circuiting as soon as the curated set has any match — a
     // curated id can otherwise permanently shadow a more specific live
     // model whose id happens to be one of its substrings. E.g.
-    // "google/gemini-3.8-flash:batch" is curated, so every prefix of the
-    // *non*-batch "google/gemini-3.8-flash" — including its own full,
-    // exact slug — also substring-matches the curated entry, making the
-    // plain variant unreachable no matter what's typed. Capped: a broad
+    // if "anthropic/claude-haiku-5.5:batch" were curated, every prefix of
+    // the *non*-batch "anthropic/claude-haiku-5.5" — including its own
+    // full, exact slug — would also substring-match the curated entry,
+    // making the plain variant unreachable no matter what's typed. Capped: a broad
     // query (e.g. a single letter) shouldn't dump hundreds of live results
     // into the picker any more than the old unfiltered fetch did.
     const curatedMatches = CURATED_MODELS.filter((m) => matches(m, q));
